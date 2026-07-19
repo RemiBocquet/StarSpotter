@@ -1,0 +1,729 @@
+<!doctype html>
+<html lang="fr">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,maximum-scale=1,user-scalable=no,viewport-fit=cover">
+<meta name="theme-color" content="#04060d">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<title>Pointe-Étoiles</title>
+<!--
+  Pointe-Étoiles — viseur AR du ciel nocturne, fichier unique, hors-ligne.
+  Données : HYG v4.1 (astronexus, CC BY-SA 4.0) — 1000 étoiles les plus brillantes,
+  coordonnées précessées à l'époque J2026.5 (astropy FK5).
+  Lignes/labels de constellations : d3-celestial (O. Frohn, BSD-3).
+-->
+<style>
+:root{
+  --bg:#04060d; --panel:rgba(9,13,24,.84); --panel2:rgba(13,18,32,.92);
+  --line:rgba(150,175,255,.14); --tx:#e9eefb; --dim:#8a94b4;
+  --acc:#9db8ff; --amb:#ffc46b; --ok:#7fe0a7; --r:14px;
+}
+*{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+html,body{margin:0;height:100%;overflow:hidden;background:var(--bg);color:var(--tx);
+  font:15px/1.45 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;
+  user-select:none;-webkit-user-select:none;overscroll-behavior:none}
+.mono{font-family:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;font-size:12.5px}
+button{font:inherit;color:var(--tx);background:none;border:0;cursor:pointer}
+input{font:inherit;color:var(--tx)}
+.hidden{display:none!important}
+
+#cam{position:fixed;inset:0;width:100%;height:100%;object-fit:cover;display:none;background:#000}
+#sky{position:fixed;inset:0;width:100%;height:100%;touch-action:none}
+
+/* ---- barre haute ---- */
+#topbar{position:fixed;top:calc(env(safe-area-inset-top,0px) + 10px);left:12px;right:12px;
+  display:flex;gap:8px;z-index:6}
+#searchwrap{flex:1;display:flex;align-items:center;background:var(--panel);
+  border:1px solid var(--line);border-radius:var(--r);backdrop-filter:blur(16px);
+  -webkit-backdrop-filter:blur(16px);padding-left:12px}
+#searchwrap svg{flex:none;opacity:.55}
+#q{flex:1;background:none;border:0;outline:0;padding:12px 8px;font-size:15px;min-width:0}
+#q::placeholder{color:var(--dim)}
+#qclear{padding:0 12px;color:var(--dim);font-size:16px;align-self:stretch}
+.rbtn{width:46px;flex:none;background:var(--panel);border:1px solid var(--line);
+  border-radius:var(--r);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);
+  display:flex;align-items:center;justify-content:center;color:var(--dim)}
+.rbtn:active{color:var(--tx)}
+
+#status{position:fixed;top:calc(env(safe-area-inset-top,0px) + 62px);left:12px;right:12px;
+  z-index:5;display:flex;gap:6px;flex-wrap:wrap;pointer-events:none}
+.chip{background:var(--panel);border:1px solid var(--line);border-radius:99px;
+  padding:3px 10px;font-size:11px;color:var(--dim);backdrop-filter:blur(10px);
+  -webkit-backdrop-filter:blur(10px)}
+.chip.warn{color:var(--amb);border-color:rgba(255,196,107,.35)}
+
+/* ---- résultats de recherche ---- */
+#results{position:fixed;top:calc(env(safe-area-inset-top,0px) + 64px);left:12px;right:12px;
+  max-height:56vh;overflow-y:auto;background:var(--panel2);border:1px solid var(--line);
+  border-radius:var(--r);backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);z-index:7}
+.rhead{padding:9px 14px 5px;font-size:10.5px;letter-spacing:.22em;text-transform:uppercase;color:var(--dim)}
+.res{display:flex;align-items:center;justify-content:space-between;gap:10px;
+  padding:11px 14px;border-top:1px solid rgba(255,255,255,.045);cursor:pointer}
+.res:active{background:rgba(157,184,255,.08)}
+.res .n{font-weight:600}
+.res .s{font-size:12px;color:var(--dim);margin-top:1px}
+.res .right{text-align:right;flex:none}
+.res .m{font-size:12px;color:var(--dim)}
+.res .alt{font-size:12px}
+.alt.up{color:var(--ok)} .alt.dn{color:var(--dim)}
+.nores{padding:16px 14px;color:var(--dim);font-size:13.5px}
+
+/* ---- carte cible ---- */
+#card{position:fixed;left:12px;right:12px;bottom:calc(env(safe-area-inset-bottom,0px) + 12px);
+  background:var(--panel2);border:1px solid var(--line);border-radius:16px;z-index:6;
+  backdrop-filter:blur(20px);-webkit-backdrop-filter:blur(20px);padding:13px 15px 12px;
+  box-shadow:0 8px 40px rgba(0,0,0,.5)}
+#card .row1{display:flex;align-items:flex-start;justify-content:space-between;gap:8px}
+#cName{font-size:20px;font-weight:700;letter-spacing:.01em}
+#cSub{font-size:12.5px;color:var(--dim);margin-top:1px}
+#cClose{color:var(--dim);font-size:17px;padding:2px 4px;margin:-2px -4px 0 0}
+#cStats{margin-top:8px;color:var(--dim)}
+#cDyn{margin-top:5px;font-size:13.5px}
+#cDyn .big{color:var(--amb);font-weight:650}
+#cBtns{display:flex;gap:8px;margin-top:11px}
+#cBtns button{flex:1;padding:10px 8px;border-radius:11px;font-size:13.5px;font-weight:600;
+  border:1px solid var(--line);background:rgba(157,184,255,.09)}
+#cBtns #cCal{background:rgba(255,196,107,.12);border-color:rgba(255,196,107,.3);color:var(--amb)}
+#cBtns button:disabled{opacity:.4}
+
+/* ---- panneau réglages ---- */
+#sheet{position:fixed;left:0;right:0;bottom:0;z-index:8;background:var(--panel2);
+  border-top:1px solid var(--line);border-radius:18px 18px 0 0;
+  backdrop-filter:blur(22px);-webkit-backdrop-filter:blur(22px);
+  padding:14px 18px calc(env(safe-area-inset-bottom,0px) + 16px);max-height:82vh;overflow-y:auto}
+#sheet h2{margin:0 0 4px;font-size:11.5px;letter-spacing:.28em;text-transform:uppercase;
+  color:var(--dim);font-weight:600}
+.srow{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:9px 0}
+.srow label{font-size:14px}
+.srow .val{color:var(--acc);min-width:52px;text-align:right}
+.srange{display:block;padding:2px 0 10px}
+input[type=range]{width:100%;accent-color:var(--acc)}
+.sw{position:relative;width:44px;height:26px;flex:none}
+.sw input{position:absolute;inset:0;opacity:0;margin:0;cursor:pointer}
+.sw i{position:absolute;inset:0;border-radius:99px;background:rgba(255,255,255,.1);
+  border:1px solid var(--line);transition:.18s}
+.sw i::after{content:"";position:absolute;top:2px;left:2px;width:20px;height:20px;border-radius:50%;
+  background:var(--dim);transition:.18s}
+.sw input:checked + i{background:rgba(157,184,255,.28);border-color:var(--acc)}
+.sw input:checked + i::after{left:20px;background:var(--acc)}
+.sdiv{height:1px;background:rgba(255,255,255,.06);margin:8px 0}
+.loc{display:flex;gap:8px;align-items:center;padding:6px 0 2px}
+.loc input{width:0;flex:1;background:rgba(255,255,255,.06);border:1px solid var(--line);
+  border-radius:9px;padding:8px 10px;outline:none}
+.loc button, .mini{padding:8px 12px;border-radius:9px;border:1px solid var(--line);
+  background:rgba(157,184,255,.09);font-size:13px;flex:none}
+#credits{margin-top:12px;font-size:10.5px;color:var(--dim);line-height:1.6}
+#sheetClose{position:absolute;top:10px;right:12px;color:var(--dim);font-size:17px;padding:6px}
+
+/* ---- écran de démarrage ---- */
+#start{position:fixed;inset:0;z-index:20;display:flex;flex-direction:column;align-items:center;
+  justify-content:center;text-align:center;padding:32px 28px;
+  background:radial-gradient(120% 90% at 50% 0%,#0b1226 0%,#04060d 55%,#02030a 100%)}
+#start h1{margin:0;font-size:21px;font-weight:600;letter-spacing:.38em;text-transform:uppercase;
+  padding-left:.38em}
+#start .tag{margin:14px 0 0;color:var(--dim);font-size:14px;max-width:300px}
+#start .reticle{width:74px;height:74px;margin-bottom:26px;position:relative}
+#start .reticle::before{content:"";position:absolute;inset:0;border:1.5px solid var(--amb);
+  border-radius:50%;opacity:.9;animation:pulse 2.6s ease-in-out infinite}
+#start .reticle::after{content:"";position:absolute;left:50%;top:50%;width:5px;height:5px;
+  margin:-2.5px;border-radius:50%;background:var(--amb);box-shadow:0 0 12px 2px rgba(255,196,107,.7)}
+@keyframes pulse{0%,100%{transform:scale(1);opacity:.9}50%{transform:scale(1.12);opacity:.45}}
+#go{margin-top:34px;padding:14px 30px;border-radius:14px;font-size:15.5px;font-weight:650;
+  color:#0a0d18;background:linear-gradient(180deg,#ffd694,#f4ab4f);
+  box-shadow:0 6px 28px rgba(255,196,107,.28)}
+#start .tiny{margin-top:22px;font-size:11.5px;color:var(--dim);max-width:320px;line-height:1.55}
+@media (prefers-reduced-motion:reduce){#start .reticle::before{animation:none}}
+
+#toast{position:fixed;left:50%;bottom:calc(env(safe-area-inset-bottom,0px) + 96px);
+  transform:translateX(-50%);background:var(--panel2);border:1px solid var(--line);
+  border-radius:12px;padding:10px 16px;font-size:13.5px;z-index:30;max-width:86vw;text-align:center;
+  backdrop-filter:blur(14px);-webkit-backdrop-filter:blur(14px);
+  transition:opacity .3s;pointer-events:none}
+
+/* mode nuit : filtre rouge global (préserve la vision nocturne) */
+body.night{filter:grayscale(.15) sepia(1) hue-rotate(-46deg) saturate(4.6) brightness(.72)}
+</style>
+</head>
+<body>
+
+<video id="cam" playsinline muted autoplay></video>
+<canvas id="sky"></canvas>
+
+<div id="topbar">
+  <div id="searchwrap">
+    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+    <input id="q" placeholder="Chercher une étoile ou constellation…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" enterkeyhint="search">
+    <button id="qclear" class="hidden" aria-label="Effacer">✕</button>
+  </div>
+  <button id="gear" class="rbtn" aria-label="Réglages">
+    <svg width="19" height="19" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><circle cx="12" cy="12" r="3.2"/><path d="M19.4 15a1.6 1.6 0 0 0 .32 1.77l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.6 1.6 0 0 0-1.77-.32 1.6 1.6 0 0 0-.97 1.47V21a2 2 0 1 1-4 0v-.09a1.6 1.6 0 0 0-1.05-1.47 1.6 1.6 0 0 0-1.77.32l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06A1.6 1.6 0 0 0 4.6 15a1.6 1.6 0 0 0-1.47-.97H3a2 2 0 1 1 0-4h.09A1.6 1.6 0 0 0 4.56 9a1.6 1.6 0 0 0-.32-1.77l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06A1.6 1.6 0 0 0 8.84 4.7 1.6 1.6 0 0 0 9.81 3.23V3a2 2 0 1 1 4 0v.09c0 .64.38 1.21.97 1.47a1.6 1.6 0 0 0 1.77-.32l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.6 1.6 0 0 0-.32 1.77v.08c.26.58.83.96 1.47.97H21a2 2 0 1 1 0 4h-.09a1.6 1.6 0 0 0-1.47.97Z"/></svg>
+  </button>
+</div>
+
+<div id="status"></div>
+<div id="results" class="hidden"></div>
+
+<div id="card" class="hidden">
+  <div class="row1">
+    <div><div id="cName"></div><div id="cSub"></div></div>
+    <button id="cClose" aria-label="Fermer">✕</button>
+  </div>
+  <div id="cStats" class="mono"></div>
+  <div id="cDyn"></div>
+  <div id="cBtns">
+    <button id="cCal">Caler la boussole ici</button>
+  </div>
+</div>
+
+<div id="sheet" class="hidden">
+  <button id="sheetClose" aria-label="Fermer">✕</button>
+  <h2>Visée</h2>
+  <div class="srow"><label>Champ vertical</label><span class="val mono" id="fovV">62°</span></div>
+  <div class="srange"><input type="range" id="fov" min="30" max="100" step="1" value="62"></div>
+  <div class="srow"><label>Correction d'azimut</label><span class="val mono" id="azoV">0,0°</span></div>
+  <div class="srange" style="display:flex;gap:10px;align-items:center">
+    <input type="range" id="azo" min="-25" max="25" step="0.5" value="0" style="flex:1">
+    <button class="mini" id="azoReset">0</button>
+  </div>
+  <div class="srow"><label>Magnitude limite</label><span class="val mono" id="magV">5,0</span></div>
+  <div class="srange"><input type="range" id="mag" min="1.5" max="5" step="0.1" value="5"></div>
+  <div class="sdiv"></div>
+  <h2>Affichage</h2>
+  <div class="srow"><label>Caméra</label><span class="sw"><input type="checkbox" id="tCam" checked><i></i></span></div>
+  <div class="srow"><label>Lignes des constellations</label><span class="sw"><input type="checkbox" id="tLines" checked><i></i></span></div>
+  <div class="srow"><label>Noms des constellations</label><span class="sw"><input type="checkbox" id="tCn" checked><i></i></span></div>
+  <div class="srow"><label>Noms des étoiles brillantes</label><span class="sw"><input type="checkbox" id="tSn" checked><i></i></span></div>
+  <div class="srow"><label>Mode nuit (rouge)</label><span class="sw"><input type="checkbox" id="tNight"><i></i></span></div>
+  <div class="srow"><label>Visée manuelle (glisser)</label><span class="sw"><input type="checkbox" id="tMan"><i></i></span></div>
+  <div class="sdiv"></div>
+  <h2>Position de l'observateur</h2>
+  <div class="loc">
+    <input id="latI" inputmode="decimal" placeholder="Latitude">
+    <input id="lonI" inputmode="decimal" placeholder="Longitude">
+    <button id="locApply">OK</button>
+  </div>
+  <div class="loc"><button id="locGps" style="flex:1">Utiliser ma position GPS</button></div>
+  <div id="credits">Catalogue HYG v4.1 (astronexus.com, CC BY-SA) · lignes d3-celestial (O. Frohn) ·
+    1000 étoiles · époque J2026.5 · calculs locaux, aucune donnée envoyée.</div>
+</div>
+
+<div id="start">
+  <div class="reticle"></div>
+  <h1>Pointe-Étoiles</h1>
+  <p class="tag">Visez le ciel, identifiez les étoiles. Cherchez-en une, la flèche vous y guide.</p>
+  <button id="go">Activer caméra &amp; capteurs</button>
+  <p class="tiny">Astuce : les boussoles de téléphone dérivent de 5–15°. Une fois lancé, centrez une
+    étoile que vous reconnaissez (la Polaire, Véga…) puis touchez « Caler la boussole ».
+    Tout fonctionne hors-ligne.</p>
+</div>
+
+<div id="toast" class="hidden"></div>
+
+<script>
+"use strict";
+/* ================= DONNÉES (injectées au build) ================= */
+const STARS = [["Sirius","α CMa","CMa",101.5791,-16.7544,-1.44,0.01,"A0m...",8.6],["Canopus","α Car","Car",96.1351,-52.7111,-0.62,0.16,"F0Ib",309],["Arcturus","α Boo","Boo",214.2178,19.0455,-0.05,1.24,"K2IIIp",36.7],["Rigil Kentaurus","α¹ Cen","Cen",220.3661,-60.9432,-0.01,0.71,"G2V",4.3],["Vega","α Lyr","Lyr",279.459,38.8098,0.03,-0.0,"A0Vvar",25.0],["Capella","α Aur","Aur",79.6628,46.0219,0.08,0.8,"M1:",42.8],["Rigel","β Ori","Ori",78.9532,-8.173,0.18,-0.03,"B8Ia",863],["Procyon","α CMi","CMi",115.1719,5.155,0.4,0.43,"F5IV-V",11.5],["Achernar","α Eri","Eri",24.6741,-57.1029,0.45,-0.16,"B3Vp",139],["Betelgeuse","α Ori","Ori",89.1519,7.4098,0.45,1.5,"M2Ib",498],["Hadar","β Cen","Cen",211.4297,-60.4994,0.61,-0.23,"B1III",392],["Altair","α Aql","Aql",298.0189,8.9401,0.76,0.22,"A7IV-V",16.7],["Acrux","α¹ Cru","Cru",187.0234,-63.2457,0.77,-0.24,"B0.5IV",322],["Aldebaran","α Tau","Tau",69.3611,16.5604,0.87,1.54,"K5III",66.6],["HYG 118360","","Aur",79.6595,46.0248,0.96,null,"G0",42.2],["Spica","α Vir","Vir",201.6482,-11.2988,0.98,-0.23,"B1V",250],["Antares","α Sco","Sco",247.7592,-26.4885,1.06,1.86,"M1Ib",554],["Pollux","β Gem","Gem",116.7336,27.96,1.16,0.99,"K0IIIv",33.8],["Fomalhaut","α PsA","PsA",344.7771,-29.4812,1.17,0.14,"A3V",25.1],["Mimosa","β Cru","Cru",192.3224,-59.8331,1.25,-0.24,"B0.5II",279],["Deneb","α Cyg","Cyg",310.584,45.3761,1.25,0.09,"A2Ia",1412],["Toliman","α² Cen","Cen",220.3598,-60.9476,1.35,0.9,"K1V",4.3],["Regulus","α Leo","Leo",152.4451,11.8367,1.36,-0.09,"B7V",79.3],["Adhara","ε CMa","CMa",104.917,-29.0097,1.5,-0.21,"B2II",405],["Castor","α Gem","Gem",114.0711,31.8275,1.58,0.03,"A2Vm",50.9],["Gacrux","γ Cru","Cru",188.1631,-57.2613,1.59,1.6,"M4III",88.6],["Shaula","λ Sco","Sco",263.8526,-37.1204,1.62,-0.23,"B1.5IV",571],["Bellatrix","γ Ori","Ori",81.6385,6.3715,1.64,-0.22,"B2III",252],["Elnath","β Tau","Tau",81.9924,28.6272,1.65,-0.13,"B7III",134],["Miaplacidus","β Car","Car",138.3707,-69.8266,1.67,0.07,"A2IV",113],["Alnilam","ε Ori","Ori",84.3899,-1.1871,1.69,-0.18,"B0Ia",1977],["Alnair","α Gru","Gru",332.4724,-46.8315,1.73,-0.07,"B7IV",101],["Alnitak","ζ Ori","Ori",85.5243,-1.9306,1.74,-0.2,"O9.5Ib",736],["γ² Vel","","Vel",122.5874,-47.4158,1.75,-0.14,"WC8",1117],["Alioth","ε UMa","UMa",193.7967,55.8164,1.76,-0.02,"A0p",82.6],["Mirfak","α Per","Per",51.5573,49.9532,1.79,0.48,"F5Ib",506],["Kaus Australis","ε Sgr","Sgr",276.4825,-34.3694,1.79,-0.03,"B9.5II",143],["Dubhe","α UMa","UMa",166.3353,61.6075,1.81,1.06,"F7V",123],["Wezen","δ CMa","CMa",107.3674,-26.4369,1.83,0.67,"F8Ia",1607],["Alkaid","η UMa","UMa",207.1457,49.1817,1.85,-0.1,"B3V",104],["Sargas","θ Sco","Sco",264.8063,-43.0118,1.86,0.41,"F1II",300],["Avior","ε Car","Car",125.7639,-59.5954,1.86,1.2,"K3III+",605],["Menkalinan","β Aur","Aur",90.3684,44.9471,1.9,0.08,"A2V",81.1],["Atria","α TrA","TrA",252.8736,-69.0723,1.91,1.45,"K2IIb-",391],["Alsephina","δ Vel","Vel",131.3588,-54.8069,1.93,0.04,"A1V",80.6],["Alhena","γ Gem","Gem",99.8102,16.3741,1.93,0.0,"A0IV",109],["Peacock","α Pav","Pav",306.9316,-56.6476,1.94,-0.12,"B2IV",179],["Polaris","α UMi","UMi",46.6717,89.3734,1.97,0.64,"F7:Ib-",433],["Mirzam","β CMa","CMa",95.9669,-17.9709,1.98,-0.24,"B1II/I",493],["Alphard","α Hya","Hya",142.2224,-8.7747,1.99,1.44,"K3III",180],["Hamal","α Ari","Ari",32.1684,23.5865,2.01,1.15,"K2III",65.8],["Algieba","γ¹ Leo","Leo",155.3573,19.7065,2.01,1.13,"K0III",130],["Diphda","β Cet","Cet",11.2295,-17.8416,2.04,1.02,"K0III",96.3],["Nunki","σ Sgr","Sgr",284.2267,-26.2614,2.05,-0.13,"B2.5V",228],["Menkent","θ Cen","Cen",212.0632,-36.4991,2.06,1.01,"K0IIIb",58.8],["Alpheratz","α And","And",2.4408,29.2366,2.07,-0.04,"B9p",97.0],["Tiaki","β Gru","Gru",341.0592,-46.7452,2.07,1.61,"M5III",177],["Saiph","κ Ori","Ori",87.2536,-9.6621,2.07,-0.17,"B0.5Ia",647],["Mirach","β And","And",17.8061,35.7603,2.07,1.58,"M0IIIv",197],["Kochab","β UMi","UMi",222.6642,74.0471,2.07,1.47,"K4IIIv",131],["Rasalhague","α Oph","Oph",264.0413,12.5427,2.08,0.15,"A5III",48.6],["Algol","β Per","Per",47.476,41.0558,2.09,-0.0,"B8V",89.9],["Almach","γ¹ And","And",31.3845,42.4556,2.1,1.37,"B8V",393],["Denebola","β Leo","Leo",177.6024,14.4238,2.14,0.09,"A3Vvar",35.9],["Cih","γ Cas","Cas",14.5826,60.8596,2.15,-0.05,"B0IV:e",549],["γ Cen","","Cen",190.7482,-49.1049,2.2,-0.02,"A1IV",130],["Aspidiske","ι Car","Car",139.4498,-59.3871,2.21,0.19,"A8Ib",766],["Naos","ζ Pup","Pup",121.1291,-40.079,2.21,-0.27,"O5IAf",1084],["Alphecca","α CrB","CrB",233.9526,26.6269,2.22,0.03,"A0V",75.0],["Mizar","ζ UMa","UMa",201.2468,54.7876,2.23,0.06,"A2V",85.8],["Suhail","λ Vel","Vel",137.2431,-43.5406,2.23,1.67,"K4Ib-I",545],["Sadr","γ Cyg","Cyg",305.795,40.3427,2.23,0.67,"F8Ib",1832],["Schedar","α Cas","Cas",10.507,56.6822,2.24,1.17,"K0II-I",228],["Eltanin","γ Dra","Dra",269.3056,51.4867,2.24,1.52,"K5III",154],["Mintaka","δ Ori","Ori",83.3405,-0.2816,2.25,-0.17,"O9.5II",692],["Caph","β Cas","Cas",2.6511,59.2958,2.28,0.38,"F2III-",54.7],["Larawag","ε Sco","Sco",252.9715,-34.3388,2.29,1.14,"K2IIIb",63.7],["ε Cen","","Cen",205.3962,-53.6,2.29,-0.17,"B1III",427],["Dschubba","δ Sco","Sco",240.4763,-22.6951,2.29,-0.12,"B0.2IV",491],["α Lup","","Lup",220.9264,-47.5002,2.3,-0.15,"B1.5II",465],["η Cen","","Cen",219.3004,-42.2726,2.33,-0.16,"B1Vn",306],["Merak","β UMa","UMa",165.8556,56.2397,2.34,0.03,"A1V",79.7],["Izar","ε Boo","Boo",221.5361,26.9637,2.35,0.97,"A0",203],["Enif","ε Peg","Peg",326.3719,9.9976,2.38,1.52,"K2Ibva",690],["κ Sco","","Sco",266.0808,-39.0408,2.39,-0.17,"B1.5II",483],["Ankaa","α Phe","Phe",6.897,-42.1621,2.4,1.08,"K0III.",84.7],["Phecda","γ UMa","UMa",178.8032,53.5474,2.41,0.04,"A0V",83.2],["Sabik","η Oph","Oph",257.975,-15.7554,2.43,0.06,"A2.5Va",88.4],["Scheat","β Peg","Peg",346.2657,28.227,2.44,1.66,"M2II-I",196],["Alderamin","α Cep","Cep",319.8021,62.6985,2.45,0.26,"A7IV-V",49.0],["Aludra","η CMa","CMa",111.286,-29.3563,2.45,-0.08,"B5Ia",1989],["Markeb","κ Vel","Vel",140.7339,-55.1246,2.47,-0.14,"B2IV",572],["Aljanah","ε Cyg","Cyg",311.821,34.0708,2.48,1.02,"K0III",72.7],["Markab","α Peg","Peg",346.5207,15.3483,2.49,-0.0,"B9.5II",133],["ζ Oph","","Oph",249.6552,-10.6186,2.54,0.04,"O9.5V",366],["Menkar","α Cet","Cet",45.917,4.1921,2.54,1.63,"M2III",249],["ζ Cen","","Cen",209.3018,-47.4176,2.55,-0.18,"B2.5IV",382],["Zosma","δ Leo","Leo",168.8785,20.3781,2.56,0.13,"A4V",58.4],["Acrab","β¹ Sco","Sco",241.7456,-19.8759,2.56,-0.07,"B0.5V",404],["Gienah","γ Crv","Crv",184.2932,-17.6889,2.58,-0.11,"B8III",154],["δ Cen","","Cen",182.4358,-50.8699,2.58,-0.13,"B2IVne",415],["Arneb","α Lep","Lep",83.475,-17.8051,2.58,0.21,"F0Ib",2219],["Ascella","ζ Sgr","Sgr",286.0739,-29.8397,2.6,0.06,"A3IV",88.2],["Zubeneschamali","β Lib","Lib",229.6092,-9.479,2.61,-0.07,"B8V",185],["Unukalhai","α Ser","Ser",236.3938,6.344,2.63,1.17,"K2III",74.0],["Sheratan","β Ari","Ari",29.0275,20.9365,2.64,0.17,"A5V...",58.7],["Kraz","β Crv","Crv",188.9461,-23.543,2.65,0.89,"G5II",146],["Phact","α Col","Col",85.1524,-34.0615,2.65,-0.12,"B7IV",261],["Mahasim","θ Aur","Aur",90.3822,37.2116,2.65,-0.08,"A0p",166],["Ruchbah","δ Cas","Cas",21.8927,60.372,2.66,0.16,"A5Vv",99.4],["β Lup","","Lup",225.0699,-43.2388,2.68,-0.18,"B2III",383],["Muphrid","η Boo","Boo",208.9867,18.2658,2.68,0.58,"G0IV",37.2],["μ Vel","","Vel",161.9787,-49.5608,2.69,0.9,"G5III",117],["α Mus","","Mus",189.6989,-69.2812,2.69,-0.18,"B2IV-V",315],["Hassaleh","ι Aur","Aur",74.6809,33.2055,2.69,1.49,"K3IIva",493],["Lesath","υ Sco","Sco",263.142,-37.3142,2.7,-0.18,"B2IV",576],["π Pup","","Pup",109.5198,-37.1464,2.71,1.62,"K3Ib",807],["Kaus Media","δ Sgr","Sgr",275.6725,-29.8143,2.72,1.38,"K3III",348],["Tarazed","γ Aql","Aql",296.8798,10.6796,2.72,1.51,"K3II",395],["Yed Prior","δ Oph","Oph",243.9342,-3.7606,2.73,1.58,"M1III",171],["Athebyne","η Dra","Dra",246.089,61.4547,2.73,0.91,"G8III",92.1],["Porrima","γ Vir","Vir",190.7509,-1.5939,2.74,0.37,"F0V+..",38.1],["θ Car","","Car",160.9772,-64.5337,2.74,-0.22,"B0Vp",456],["Hatysa","ι Ori","Ori",84.1826,-5.8945,2.75,-0.21,"O9III",2330],["Zubenelgenubi","α² Lib","Lib",223.0874,-16.1503,2.75,0.15,"A3IV",75.8],["ι Cen","","Cen",200.5242,-36.8513,2.75,0.07,"A2V",58.8],["Cebalrai","β Oph","Oph",266.1956,4.5583,2.76,1.17,"K2III",81.8],["Rasalgethi","α¹ Her","Her",258.9643,14.362,2.78,1.16,"M5IIva",360],["Kornephoros","β Her","Her",247.8401,21.4335,2.78,0.95,"G8III",139],["Cursa","β Eri","Eri",77.2886,-5.0541,2.78,0.16,"A3IIIv",89.4],["Imai","δ Cru","Cru",184.1423,-58.8962,2.79,-0.19,"B2IV",345],["Rastaban","β Dra","Dra",262.7583,52.2827,2.79,0.95,"G2II",380],["γ Lup","","Lup",234.2291,-41.2536,2.8,-0.22,"B2IV",421],["Nihal","β Lep","Lep",82.3455,-20.7401,2.81,0.81,"G5II",160],["ζ Her","","Her",250.5718,31.5559,2.81,0.65,"F9IV",35.0],["Kaus Borealis","λ Sgr","Sgr",277.4014,-25.4046,2.82,1.02,"K1IIIb",78.2],["Paikauhale","τ Sco","Sco",249.3842,-28.2686,2.82,-0.21,"B0V",474],["β Hyi","","Hyi",6.7575,-77.1053,2.82,0.62,"G2IV",24.3],["β TrA","","TrA",239.3762,-63.5095,2.83,0.32,"F2III",40.4],["Tureis","ρ Pup","Pup",122.1683,-24.3822,2.83,0.46,"F2mF5I",63.5],["Algenib","γ Peg","Peg",3.651,15.3308,2.83,-0.19,"B2IV",392],["ζ Per","","Per",58.9511,31.9601,2.84,0.27,"B1Ib",752],["α Ara","","Ara",263.4735,-49.8941,2.84,-0.14,"B2Vne",267],["β Ara","","Ara",261.8771,-55.5516,2.84,1.48,"K3Ib-I",646],["Deneb Algedi","δ Cap","Cap",327.1249,-16.0058,2.85,0.18,"A5mF2",38.7],["Alcyone","η Tau","Tau",57.2663,24.185,2.85,-0.09,"B7III",403],["Vindemiatrix","ε Vir","Vir",195.874,10.8173,2.85,0.93,"G8IIIv",110],["Castor B","α Gem","Gem",114.0744,31.8301,2.85,null,"A",51.5],["Fawaris","δ Cyg","Cyg",296.4506,45.1966,2.86,-0.0,"B9.5II",165],["α Hyi","","Hyi",29.9003,-61.4416,2.86,0.29,"F0V",71.8],["γ TrA","","TrA",230.3564,-68.7745,2.87,0.01,"A1V",184],["Tejat","μ Gem","Gem",96.1409,22.4975,2.87,1.62,"M3IIIv",232],["α Tuc","","Tuc",335.0735,-60.1263,2.87,1.39,"K3III",200],["Acamar","θ¹ Eri","Eri",44.8165,-40.1996,2.88,0.13,"A4III+",161],["Albaldah","π Sgr","Sgr",287.8345,-20.9792,2.88,0.38,"F2II/I",510],["Gomeisa","β CMi","CMi",112.1467,8.2338,2.89,-0.1,"B8Vvar",162],["Cor Caroli","α² CVn","CVn",194.316,38.1757,2.89,-0.12,"A0spe.",115],["Fang","π Sco","Sco",240.1151,-26.1882,2.89,-0.18,"B1V",586],["Sadalsuud","β Aqr","Aqr",323.238,-5.4533,2.9,0.83,"G0Ib",537],["ε Per","","Per",59.9102,40.0845,2.9,-0.2,"B0.5V",638],["Alniyat","σ Sco","Sco",245.701,-25.6541,2.9,0.3,"B1III",697],["γ Per","","Per",46.6835,53.6081,2.91,0.72,"G8III+",243],["υ Car","","Car",146.9409,-65.1955,2.92,0.27,"A9",1437],["Matar","η Peg","Peg",341.062,30.3605,2.93,0.85,"G2II-I",214],["Algorab","δ Crv","Crv",187.8099,-16.6627,2.94,-0.01,"B9.5V",86.9],["τ Pup","","Pup",102.6484,-50.6471,2.94,1.21,"K0III.",182],["Sadalmelik","α Aqr","Aqr",331.786,-0.1901,2.95,0.97,"G2Ib",524],["Ras Elased Australis","ε Leo","Leo",146.8376,23.651,2.97,0.81,"G0II",247],["Tianguan","ζ Tau","Tau",84.8076,21.1563,2.97,-0.15,"B4IIIp",445],["Zaurak","γ Eri","Eri",59.8168,-13.4348,2.97,1.59,"M1IIIb",203],["Alnasl","γ² Sgr","Sgr",271.8777,-30.4211,2.98,0.98,"K0III",96.9],["γ Hya","","Hya",200.092,-23.3105,2.99,0.92,"G8III",134],["ι¹ Sco","","Sco",267.3599,-40.1344,2.99,0.51,"F3Ia",1930],["Okab","ζ Aql","Aql",286.6571,13.9047,2.99,0.01,"A0Vn",83.0],["Pherkad","γ UMi","UMi",230.177,71.7397,3.0,0.06,"A3II-I",487],["Xamidimura","μ¹ Sco","Sco",253.4177,-38.0902,3.0,-0.2,"B1.5IV",501],["ψ UMa","","UMa",167.7859,44.3542,3.0,1.14,"K1III",145],["β Tri","","Tri",32.7825,35.1113,3.0,0.14,"A5III",127],["Aldhanab","γ Gru","Gru",328.881,-37.2389,3.0,-0.08,"B8III",211],["δ Per","","Per",56.206,47.8698,3.01,-0.12,"B5III",516],["ε Crv","","Crv",182.8731,-22.767,3.02,1.33,"K2III",318],["ο² CMa","","CMa",106.0329,-23.8737,3.02,-0.08,"B3Ia",2764],["Furud","ζ CMa","CMa",95.3328,-30.0767,3.02,-0.16,"B2.5V",362],["Almaaz","ε Aur","Aur",75.9691,43.8596,3.03,0.54,"F0Ia",2132],["β Mus","","Mus",191.9842,-68.2526,3.04,-0.18,"B2V",342],["Seginus","γ Boo","Boo",218.2861,38.1934,3.04,0.19,"A7IIIv",86.8],["Dabih","β Cap","Cap",305.6243,-14.6957,3.05,0.79,"A5:n",327],["Albireo","β¹ Cyg","Cyg",292.9476,28.0168,3.05,1.09,"K3II+.",434],["Mebsuta","ε Gem","Gem",101.3904,25.1024,3.06,1.38,"A3mA6-",845],["Tania Australis","μ UMa","UMa",155.9745,41.3652,3.06,1.6,"M0III",230],["Altais","δ Dra","Dra",288.1382,67.7082,3.07,0.99,"G9III",97.4],["η Sgr","","Sgr",274.8551,-36.751,3.1,1.58,"M2III",146],["ν Hya","","Hya",162.7335,-16.3329,3.11,1.23,"K0/K1I",144],["ζ Hya","","Hya",134.1982,5.8431,3.11,0.98,"G8III-",167],["α Ind","","Ind",309.8547,-47.1969,3.11,1.0,"K0III",98.3],["λ Cen","","Cen",174.2546,-63.1666,3.11,-0.04,"B9II:",420],["ζ Ara","","Ara",255.2057,-56.0287,3.12,1.55,"K5III",486],["Wazn","β Col","Col",87.9738,-35.7598,3.12,1.15,"K1.5II",87.2],["Talitha","ι UMa","UMa",135.2528,47.9359,3.12,0.22,"A7IV",47.3],["Sarin","δ Her","Her",259.0304,24.8096,3.12,0.08,"A3IVv",75.1],["κ Cen","","Cen",225.2242,-42.2086,3.13,-0.21,"B2IV",383],["α Lyn","","Lyn",140.6656,34.2789,3.14,1.55,"M0IIIv",203],["π Her","","Her",258.9928,36.7807,3.16,1.44,"K3IIva",377],["HR 3803","","Vel",143.0072,-57.152,3.16,1.54,"K5III",239],["Aldhibah","ζ Dra","Dra",257.2173,65.6822,3.17,-0.12,"B6III",328],["ν Pup","","Pup",99.6432,-43.2204,3.17,-0.1,"B8III",371],["θ UMa","","UMa",143.655,51.5549,3.17,0.47,"F6IV",44.0],["φ Sgr","","Sgr",281.8276,-26.9611,3.17,-0.11,"B8.5II",239],["α Cir","","Cir",221.171,-65.0884,3.18,0.26,"F1Vp",54.0],["Haedus","η Aur","Aur",77.0945,41.2675,3.18,-0.15,"B3V",243],["Tabit","π³ Ori","Ori",72.8203,7.0054,3.19,0.48,"F6V",26.3],["ε Lep","","Lep",76.646,-22.3371,3.19,1.46,"K4III",213],["Fuyue","","Sco",267.9157,-37.049,3.19,1.19,"K0/K1I",126],["κ Oph","","Oph",254.731,9.3357,3.19,1.16,"K2IIIv",91.5],["ζ Cyg","","Cyg",318.5165,30.3367,3.21,0.99,"G8II",143],["Errai","γ Cep","Cep",355.1159,77.7802,3.21,1.03,"K1IV",46.0],["δ Lup","","Lup",230.7803,-40.7414,3.22,-0.23,"B1.5IV",884],["Alfirk","β Cep","Cep",322.2478,70.6774,3.23,-0.2,"B2IIIv",685],["η Ser","","Ser",275.6704,-2.8898,3.23,0.94,"K0III-",60.5],["Yed Posterior","ε Oph","Oph",244.9315,-4.7551,3.23,0.97,"G8III",106],["α Pic","","Pic",102.1156,-61.9705,3.24,0.23,"A7IV",96.6],["θ Aql","","Aql",303.1677,-0.7411,3.24,-0.07,"B9.5II",286],["Brachium","σ Lib","Lib",226.407,-25.3844,3.25,1.67,"M3/M4I",288],["σ Pup","","Pup",112.518,-43.3563,3.25,1.51,"K5III",194],["π Hya","","Hya",211.9719,-26.8088,3.25,1.09,"K2III",101],["Sulafat","γ Lyr","Lyr",284.9839,32.7274,3.25,-0.05,"B9III",620],["γ Hyi","","Hyi",56.7143,-74.1573,3.26,1.59,"M2III",214],["θ Oph","","Oph",260.9098,-25.0235,3.27,-0.19,"B2IV",436],["δ And","","And",10.1878,31.0057,3.27,1.27,"K3III.",106],["Skat","δ Aqr","Aqr",344.0133,-15.6793,3.27,0.07,"A3V",161],["ω Car","","Car",153.5914,-70.1699,3.29,-0.07,"B8III",342],["μ Lep","","Lep",78.5308,-16.1759,3.29,-0.11,"B9IV:",186],["Edasich","ι Dra","Dra",231.3808,58.874,3.29,1.17,"K2III",101],["HR 4140","","Car",158.2431,-61.8222,3.3,-0.09,"B4Vne",483],["α Dor","","Dor",68.643,-54.991,3.3,-0.08,"A0V:",169],["Propus","η Gem","Gem",94.1194,22.4966,3.31,1.6,"M3III",385],["γ Ara","","Ara",261.9077,-56.3993,3.31,-0.15,"B1Ib",1113],["η Sco","","Sco",258.5139,-43.2713,3.32,0.44,"F3p",73.5],["ρ Per","","Per",46.7211,38.941,3.32,1.53,"M3IIIv",308],["τ Sgr","","Sgr",287.1481,-27.6293,3.32,1.17,"K1/K2I",122],["ν Oph","","Oph",270.1215,-9.7746,3.32,0.99,"K0III",151],["Megrez","δ UMa","UMa",184.1813,56.8855,3.32,0.08,"A3Vvar",80.5],["β Phe","","Phe",16.8151,-46.5769,3.32,0.89,"G8IIIv",0],["α Ret","","Ret",63.6929,-62.408,3.33,0.92,"G7III",162],["Chertan","θ Leo","Leo",168.907,15.2843,3.33,-0.0,"A2V",165],["Azmidi","ξ Pup","Pup",117.6023,-24.9278,3.34,1.22,"G6Ia",1199],["Segin","ε Cas","Cas",29.083,63.7992,3.35,-0.15,"B2pvar",412],["Alzirr","ξ Gem","Gem",101.6941,12.8647,3.35,0.44,"F5IV",58.7],["η Ori","","Ori",81.4527,-2.3748,3.35,-0.24,"B1V",977],["Muscida","ο UMa","UMa",128.1113,60.6269,3.35,0.86,"G4II-I",179],["δ Aql","","Aql",291.7084,3.1695,3.36,0.32,"F0IV",50.6],["ε Lup","","Lup",231.1231,-44.7828,3.37,-0.19,"B2IV-V",512],["Ashlesha","ε Hya","Hya",132.0439,6.32,3.38,0.69,"G0III-",129],["Heze","ζ Vir","Vir",204.0115,-0.7304,3.38,0.11,"A3V",74.1],["Minelauva","δ Vir","Vir",194.2349,3.254,3.39,1.57,"M3III",198],["Meissa","λ Ori","Ori",84.1497,9.9496,3.39,-0.16,"O...",1098],["ζ Cep","","Cep",332.9444,58.3325,3.39,1.56,"K1Ibv",836],["HR 4050","","Car",154.493,-61.4653,3.39,1.54,"K3II",658],["HYG 119131","","Oph",257.9722,-15.7574,3.4,null,"A3",84.1],["Chamukuy","θ² Tau","Tau",67.5447,15.9275,3.4,0.18,"A7III",150],["Homam","ζ Peg","Peg",340.6961,10.9704,3.41,-0.09,"B8.5V",204],["ζ Lup","","Lup",228.5513,-52.1979,3.41,0.92,"G8III",117],["λ Tau","","Tau",60.538,12.5632,3.41,-0.1,"B3V",484],["ν Cen","","Cen",207.7764,-41.8186,3.41,-0.23,"B2IV",437],["η Cep","","Cep",311.4558,61.9423,3.41,0.91,"K0IV",46.5],["γ Phe","","Phe",22.3782,-43.1832,3.41,1.54,"K5II-I",234],["μ Her","","Her",266.8745,27.7068,3.42,0.75,"G5IV",27.1],["Mothallah","α Tri","Tri",28.6501,29.7068,3.42,0.49,"F6IV",63.3],["β Pav","","Pav",311.8283,-66.1053,3.42,0.16,"A5IV",135],["η Lup","","Lup",240.4716,-38.4701,3.42,-0.21,"B2.5IV",442],["Adhafera","ζ Leo","Leo",154.5398,23.2843,3.43,0.31,"F0III",274],["λ Aql","","Aql",286.9137,-4.8407,3.43,-0.1,"B9Vn",124],["HR 3659","","Car",137.9164,-59.0761,3.43,-0.19,"B2IV",447],["Tania Borealis","λ UMa","UMa",154.6711,42.7809,3.45,0.03,"A2IV",138],["χ Car","","Car",119.363,-53.0544,3.46,-0.18,"B3IVp",455],["Achird","η Cas","Cas",12.6793,57.9551,3.46,0.59,"G0V",19.4],["δ Boo","","Boo",229.1429,33.2173,3.46,0.96,"G8III",122],["η Cet","","Cet",17.4808,-10.0424,3.46,1.16,"K2III",124],["μ Cen","","Cen",207.8062,-42.6046,3.47,-0.17,"B2IV-V",506],["Kaffaljidhma","γ Cet","Cet",41.1692,3.3461,3.47,0.09,"A3V",79.6],["η Her","","Her",250.9514,38.8732,3.48,0.92,"G8III-",109],["η Leo","","Leo",152.1934,16.6324,3.48,-0.03,"A0Ib",1269],["Nganurganity","σ CMa","CMa",105.6938,-27.9744,3.49,1.73,"K4III",1121],["ε Gru","","Gru",342.5352,-51.1768,3.49,0.08,"A3V",129],["Nekkar","β Boo","Boo",225.7362,40.2872,3.49,0.96,"G8III",225],["τ Cet","","Cet",26.3251,-15.7988,3.49,0.73,"G8V",11.9],["α Tel","","Tel",277.2342,-45.9509,3.49,-0.18,"B3IV",278],["Alula Borealis","ν UMa","UMa",169.976,32.9493,3.49,1.4,"K3III",399],["κ CMa","","CMa",102.7079,-32.5406,3.5,-0.12,"B1.5IV",659],["Wasat","δ Gem","Gem",110.4259,21.9312,3.5,0.37,"F0IV..",60.5],["ι Cep","","Cep",342.6579,66.3402,3.5,1.05,"K0III",115],["γ Sge","","Sge",299.9839,19.5657,3.51,1.57,"K5III",258],["Sadalbari","μ Peg","Peg",342.8213,24.7421,3.51,0.93,"M2III",106],["φ Vel","","Vel",149.449,-54.6947,3.52,-0.07,"B5Ib",1591],["Sheliak","β Lyr","Lyr",282.7647,33.3949,3.52,0.0,"A8:V",962],["Biham","θ Peg","Peg",332.8841,6.3292,3.52,0.09,"A2V",92.3],["γ Vir","","Vir",190.7487,-1.5942,3.52,null,"F0",38.6],["ξ² Sgr","","Sgr",284.8274,-21.0695,3.52,1.15,"G8/K0I",365],["Rana","δ Eri","Eri",56.13,-9.6754,3.52,0.92,"K0IV",29.5],["Subra","ο Leo","Leo",145.6406,9.7705,3.52,0.52,"A5V+..",130],["Ain","ε Tau","Tau",67.542,19.237,3.53,1.01,"K0III",147],["Tarf","β Cnc","Cnc",124.4876,9.102,3.53,1.48,"K4III",303],["ξ Ser","","Ser",264.7764,-15.4129,3.54,0.26,"F0IIIp",105],["μ Ser","","Ser",237.7514,-3.5095,3.54,-0.04,"A0V",170],["ξ Hya","","Hya",173.5778,-32.0045,3.54,0.95,"G8III",130],["ζ Lep","","Lep",87.0394,-14.814,3.55,0.1,"A2Vann",70.5],["υ Eri","","Eri",64.7245,-33.7351,3.55,-0.11,"B9V",178],["χ Dra","","Dra",275.141,72.7437,3.55,0.49,"F7Vvar",26.3],["ι Lup","","Lup",215.2785,-46.1789,3.55,-0.18,"B2.5IV",338],["δ Pav","","Pav",302.8204,-66.1111,3.55,0.75,"G5IV-V",19.9],["ι Cet","","Cet",5.1944,-8.6772,3.56,1.21,"K2III",275],["Pipirima","μ² Sco","Sco",253.5339,-38.0601,3.56,-0.21,"B2IV",474],["φ Eri","","Eri",34.3637,-51.3904,3.56,-0.12,"B8IV-V",154],["δ Crt","","Crt",170.167,-14.9223,3.56,1.11,"K0III",186],["ρ Boo","","Boo",218.243,30.2562,3.57,1.3,"K3III",160],["κ Gem","","Gem",116.5111,24.3322,3.57,0.93,"G8III",141],["Alkaphrah","κ UMa","UMa",136.3556,47.0498,3.57,0.01,"A1Vn",358],["φ¹ Lup","","Lup",230.8741,-36.3555,3.57,1.53,"K5III",275],["Algedi","α² Cap","Cap",304.8805,-12.4608,3.58,0.88,"G6/G8I",106],["λ Gem","","Gem",109.9036,16.4903,3.58,0.11,"A3V...",101],["τ Ori","","Ori",79.7237,-6.8178,3.59,-0.12,"B5III",494],["Ginan","ε Cru","Cru",185.7025,-60.5473,3.59,1.39,"K3/K4I",230],["Zavijava","β Vir","Vir",178.019,1.6153,3.59,0.52,"F8V",35.6],["γ Lep","","Lep",86.3922,-22.4415,3.59,0.48,"F7V",29.1],["Nembus","51 And","And",24.9085,48.7614,3.59,1.27,"K3III",177],["ο Vel","","Vel",130.2631,-53.0168,3.6,-0.17,"B3IV",493],["θ Cet","","Cet",21.3372,-8.0472,3.6,1.06,"K0III",114],["ψ Vel","","Vel",142.937,-40.5839,3.6,0.37,"F2IV",61.4],["δ Ara","","Ara",263.3744,-60.7024,3.6,-0.1,"B8V",198],["θ Gem","","Gem",103.6333,33.9267,3.6,0.1,"A3III",189],["υ Lib","","Lib",234.6598,-28.2209,3.6,1.36,"K3III",224],["η Pav","","Pav",267.0846,-64.7326,3.61,1.16,"K1III",352],["Bharani","41 Ari","Ari",42.8877,27.3681,3.61,-0.1,"B8Vn",166],["λ Hya","","Hya",152.9702,-12.486,3.61,1.01,"K0III",113],["ο Tau","","Tau",51.5607,9.1203,3.61,0.89,"G8III",291],["δ Mus","","Mus",196.033,-71.691,3.61,1.19,"K2III",90.9],["Atlas","27 Tau","Tau",57.6859,24.1324,3.62,-0.07,"B8III",382],["HR 3017","","Pup",116.55,-38.0342,3.62,1.71,"K4III",1132],["ζ² Sco","","Sco",254.1136,-42.4039,3.62,1.39,"K4III",132],["ο And","","And",345.7866,42.4689,3.62,-0.1,"B6pv",687],["Alpherg","η Psc","Psc",23.2265,15.4815,3.62,0.97,"G8III",350],["λ Mus","","Mus",176.7191,-66.8758,3.63,0.16,"A7III",127],["Rotanev","β Del","Del",309.698,14.6887,3.64,0.42,"F5IV",101],["β Ser","","Ser",236.853,15.3405,3.65,0.07,"A3V",155],["23 UMa","","UMa",143.3968,62.944,3.65,0.36,"F0IV",77.7],["Prima Hyadum","γ Tau","Tau",65.3263,15.6895,3.65,0.98,"G8III",162],["ζ¹ Aqr","","Aqr",337.5489,0.1165,3.65,0.41,"F3III-",91.9],["θ Ara","","Ara",272.1735,-50.0866,3.65,-0.1,"B2Ib",813],["Nusakan","β CrB","CrB",232.2306,29.0157,3.66,0.32,"F0p",112],["τ Lib","","Lib",235.0726,-29.8628,3.66,-0.18,"B2.5V",367],["Thuban","α Dra","Dra",211.2772,64.2498,3.67,-0.05,"A0III",303],["β Ind","","Ind",314.2149,-58.3519,3.67,1.25,"K0III",612],["δ Sge","","Sge",297.1423,18.6013,3.68,1.31,"M2II",594],["π Ori","","Ori",73.1549,5.6483,3.68,-0.16,"B2III",1052],["88 Aqr","","Aqr",347.7139,-21.0281,3.68,1.2,"K1III",271],["α Pyx","","Pyx",131.1646,-33.2832,3.68,-0.18,"B1.5II",879],["Fulu","ζ Cas","Cas",9.6158,54.0424,3.69,-0.2,"B2IV",593],["Taiyangshou","χ UMa","UMa",176.8601,47.6323,3.69,1.18,"K0III",184],["Saclateni","ζ Aur","Aur",76.0839,41.1117,3.69,1.15,"K4II",786],["Nashira","γ Cap","Cap",325.3888,-16.5413,3.69,0.32,"A7III:",157],["HR 3884","","Car",146.4938,-62.6307,3.69,1.01,"G5Iab/",1561],["χ Eri","","Eri",29.2457,-51.4779,3.69,0.84,"G5IV",58.2],["ξ Her","","Her",269.6988,29.2466,3.7,0.94,"K0III",137],["γ Psc","","Psc",349.635,3.4275,3.7,0.92,"G7III",138],["τ Eri","","Eri",50.1741,-21.6629,3.7,1.61,"M3/M4I",305],["ε Ser","","Ser",238.0348,4.3997,3.71,0.15,"A2m",70.4],["π Ori","","Ori",73.9085,2.482,3.71,-0.18,"B2III",1342],["72 Oph","","Oph",272.1517,9.5696,3.71,0.16,"A4IVs",86.9],["Alshain","β Aql","Aql",299.1536,6.4747,3.71,0.85,"G8IVva",44.7],["η Lep","","Lep",89.4032,-14.1648,3.71,0.34,"F1V",48.5],["HR 3080","","Pup",118.2822,-40.6454,3.71,1.01,"G5III.",353],["Ran","ε Eri","Eri",53.5453,-9.3701,3.72,0.88,"K2V",10.5],["ξ Cyg","","Cyg",316.4741,44.0346,3.72,1.61,"K5Ibv",843],["Electra","17 Tau","Tau",56.6137,24.1946,3.72,-0.1,"B6III",405],["δ Aur","","Aur",90.4275,54.2833,3.72,1.01,"K0III",126],["λ Aqr","","Aqr",343.4989,-7.438,3.73,1.63,"M2IIIv",385],["109 Vir","","Vir",221.8977,1.7826,3.73,-0.01,"A0V",134],["ξ Tau","","Tau",52.1523,9.8233,3.73,-0.08,"B9Vn",209],["ν Oct","","Oct",326.0801,-77.2699,3.73,1.01,"K0III",69.1],["Grumium","ξ Dra","Dra",268.4968,56.8692,3.73,1.18,"K2III",113],["Baten Kaitos","ζ Cet","Cet",28.1924,-10.2051,3.74,1.14,"K2III",235],["τ Cyg","","Cyg",318.963,38.1594,3.74,0.39,"F1IV",66.3],["γ Her","","Her",245.7726,19.0926,3.74,0.3,"A9III",193],["HR 3614","","Vel",136.2676,-47.2042,3.75,1.17,"K2III",300],["γ Oph","","Oph",267.3056,2.6994,3.75,0.04,"A0V",103],["ο Sgr","","Sgr",286.5673,-21.7003,3.76,1.01,"K0III",142],["β Dor","","Dor",83.4646,-62.4729,3.76,0.64,"F6Ia",1007],["δ Lep","","Lep",88.1155,-20.8787,3.76,0.98,"G8III/",114],["α Lac","","Lac",338.0971,50.4194,3.76,0.03,"A1V",103],["ι² Cyg","","Cyg",292.5933,51.7872,3.76,0.15,"A5Vn",121],["β Mon","","Mon",97.5259,-7.052,3.76,-0.11,"B3Ve",677],["σ Ori","","Ori",85.0194,-2.5868,3.77,-0.19,"O9.5V.",1073],["Secunda Hyadum","δ¹ Tau","Tau",66.1167,17.6025,3.77,0.98,"G8III",156],["β Vol","","Vol",126.5044,-66.2257,3.77,1.13,"K2IIIv",108],["HR 3445","","Vel",130.3766,-46.7441,3.77,0.67,"F3Ia",0],["ν Per","","Per",56.7511,42.6599,3.77,0.42,"F5IIva",557],["Miram","η Per","Per",43.1626,56.0034,3.77,1.69,"K3Ib",879],["η Ara","","Ara",253.0216,-59.0853,3.77,1.56,"K5III",299],["ι Peg","","Peg",332.0617,25.4755,3.77,0.43,"F5V",38.2],["ζ Cap","","Cap",322.0438,-22.2952,3.77,1.0,"G4Ibp.",386],["Sualocin","α Del","Del",310.2172,16.0071,3.77,-0.06,"B9V",254],["ι Gem","","Gem",111.8424,27.7431,3.78,1.02,"G9III+",120],["γ² Vol","","Vol",107.1284,-70.5417,3.78,1.01,"G8IIIv",140],["HR 4257","","Car",163.6446,-58.9943,3.78,0.94,"K0III-",95.0],["ζ Boo","","Boo",220.604,13.6159,3.78,0.04,"A3IVn",176],["Albali","ε Aqr","Aqr",312.277,-9.3971,3.78,0.0,"A1V",208],["υ UMa","","UMa",148.2134,58.9125,3.78,0.29,"F0IV",116],["Praecipua","46 LMi","LMi",163.6966,34.0713,3.79,1.04,"K0III-",94.9],["Misam","κ Per","Per",47.8238,44.956,3.79,0.98,"K0III",113],["HR 2948","","Pup",114.9795,-26.8657,3.8,-0.16,"B5IV",347],["31 Cyg","","Cyg",303.6166,46.8228,3.8,1.27,"K2II+.",884],["κ Cyg","","Cyg",289.4285,53.4183,3.8,0.95,"K0III",124],["Dalim","α For","For",48.3006,-28.8847,3.8,0.54,"F8V",46.4],["δ Ser","","Ser",234.0175,10.4519,3.8,0.27,"F0IV",228],["HR 4114","","Car",157.2142,-58.8753,3.81,0.32,"F2II",1342],["Theemin","υ² Eri","Eri",69.1455,-30.5096,3.81,0.96,"G8III",214],["γ CrB","","CrB",235.9641,26.2131,3.81,0.02,"A1Vs",146],["λ And","","And",354.7173,46.6019,3.81,0.98,"G8III-",86.1],["ι Her","","Her",265.0535,45.9934,3.82,-0.18,"B3V",455],["38 Lyn","","Lyn",140.1212,36.6888,3.82,0.07,"A1V",125],["Giausar","λ Dra","Dra",173.2369,69.1845,3.82,1.61,"M0IIIv",333],["Alrescha","α Psc","Psc",30.8553,2.8906,3.82,0.02,"A2",151],["Marfik","λ Oph","Oph",248.0631,1.9279,3.82,0.02,"A2V",173],["μ Hya","","Hya",156.8434,-16.9724,3.83,1.46,"K4III",234],["φ Cen","","Cen",209.9734,-42.2289,3.83,-0.22,"B2IV",525],["α Aps","","Aps",222.8213,-79.1538,3.83,1.43,"K5III",447],["β Ret","","Ret",56.134,-64.724,3.84,1.13,"K0IV",97.4],["ο Her","","Her",272.1442,28.7677,3.84,-0.02,"B9.5V",338],["γ Mus","","Mus",188.5219,-72.279,3.84,-0.16,"B5V",325],["Polis","μ Sgr","Sgr",273.8371,-21.0495,3.84,0.2,"B2III:",0],["Atik","ο Per","Per",56.497,32.37,3.84,0.02,"B1III",1121],["θ¹ Tau","","Tau",67.5231,16.0189,3.84,0.95,"G7III",154],["ε Dra","","Dra",297.017,70.3353,3.84,0.89,"G8III",148],["HR 4167","","Vel",159.6058,-48.3638,3.84,0.3,"A3m+..",87.5],["HR 3571","","Car",133.9114,-60.7465,3.84,-0.1,"B8III",320],["ρ Leo","","Leo",158.5511,9.1694,3.84,-0.15,"B1Ib",0],["γ Ser","","Ser",239.4197,15.5768,3.85,0.48,"F6V",36.7],["β Pic","","Pic",86.9785,-51.0579,3.85,0.17,"A3V",63.4],["109 Her","","Her",276.207,21.7836,3.85,1.17,"K2III",119],["α Hor","","Hor",63.7203,-42.2303,3.85,1.08,"K1III",115],["τ Cen","","Cen",189.7913,-48.6868,3.85,0.05,"A2V",131],["α Sct","","Sct",279.1623,-8.2233,3.85,1.32,"K2III",199],["κ Dra","","Dra",188.6501,69.6424,3.85,-0.12,"B6IIIp",490],["δ Col","","Col",95.7708,-33.4513,3.85,0.86,"G7II",234],["HR 4023","","Vel",153.9632,-42.254,3.85,0.05,"A2V",101],["θ Her","","Her",269.2906,37.2485,3.86,1.35,"K1IIva",753],["Sceptrum","53 Eri","Eri",69.8488,-14.2541,3.86,1.08,"K1III",110],["Sadachbia","γ Aqr","Aqr",335.756,-1.2529,3.86,-0.06,"A0V",164],["μ And","","And",14.5585,38.6425,3.86,0.13,"A5V",130],["δ TrA","","TrA",244.4679,-63.7501,3.86,1.1,"G5II",607],["γ Aps","","Aps",249.4019,-78.9509,3.86,0.92,"K0IV",156],["ε Col","","Col",83.0386,-35.4526,3.86,1.13,"K1II/I",263],["υ¹ Cen","","Cen",210.0822,-44.9317,3.87,-0.21,"B2IV-V",427],["μ Vir","","Vir",221.1151,-5.772,3.87,0.39,"F2III",59.6],["Maia","20 Tau","Tau",56.8523,24.4485,3.87,-0.06,"B8III",383],["HR 3487","","Vel",131.7317,-46.1395,3.87,0.01,"A1III",1853],["η Aql","","Aql",298.4554,1.0755,3.87,0.63,"F6Ibv",1382],["Iklil","ρ Sco","Sco",239.6317,-29.2893,3.87,-0.2,"B2IV/V",472],["ε Phe","","Phe",2.6867,-45.6014,3.88,1.01,"K0III",144],["Mesarthim","γ² Ari","Ari",28.7475,19.4227,3.88,-0.05,"A1p",164],["Rasalas","μ Leo","Leo",148.5664,25.8809,3.88,1.22,"K0III",124],["ι Gru","","Gru",347.9619,-45.1027,3.88,1.0,"K0III",183],["κ¹ Lup","","Lup",228.4478,-48.8365,3.88,-0.03,"B9V",180],["θ Hya","","Hya",138.9353,2.2011,3.89,-0.06,"B9.5V",113],["η Cyg","","Cyg",299.3252,35.1552,3.89,1.02,"K0IIIv",135],["Zaniah","η Vir","Vir",185.3158,-0.8139,3.89,0.03,"A2IV",265],["ο¹ CMa","","CMa",103.8082,-24.219,3.89,1.74,"K3Iab",0],["Azha","η Eri","Eri",44.431,-8.7941,3.89,1.09,"K1III-",137],["HR 5089","","Cen",203.1479,-39.5432,3.9,1.19,"G8II/I",906],["π Cen","","Cen",170.5563,-54.6365,3.9,-0.16,"B5Vn",358],["Ukdah","ι Hya","Hya",145.3021,-1.2643,3.9,1.31,"K3IIIv",263],["π Lup","","Lup",226.734,-47.1529,3.91,-0.14,"B5",443],["ν Tau","","Tau",61.1423,6.0609,3.91,0.03,"A1V",117],["τ Her","","Her",245.1347,46.2514,3.91,-0.15,"B5IV",307],["Zubenelhakrabi","γ Lib","Lib",234.2532,-14.8761,3.91,1.01,"K0III",163],["σ Cen","","Cen",187.3714,-50.3771,3.91,-0.19,"B3V",412],["HR 3314","","Hya",126.746,-3.9945,3.91,-0.01,"A0V",122],["Kitalpha","α Equ","Equ",319.287,5.3587,3.92,0.55,"G0III+",190],["ε Her","","Her",255.3261,30.8889,3.92,-0.02,"A0V",155],["ρ¹ Sgr","","Sgr",290.8019,-17.7951,3.92,0.23,"F0III/",127],["ν Eri","","Eri",69.4113,-3.3002,3.93,-0.21,"B2III",675],["67 Oph","","Oph",270.4933,2.9324,3.93,0.03,"B5Ib",1231],["ω¹ Sco","","Sco",242.0904,-20.7389,3.93,-0.05,"B1V",471],["ζ Vol","","Vol",115.3692,-72.6693,3.93,1.03,"K0III",141],["HR 4337","","Car",167.4328,-59.1189,3.93,1.23,"G0Ia0",0],["κ Phe","","Phe",6.8749,-43.5331,3.93,0.17,"A7V",77.7],["δ Phe","","Phe",23.0877,-48.9357,3.93,0.97,"K0III-",142],["τ Per","","Per",44.0385,52.8689,3.93,0.76,"G4III.",254],["ν Cyg","","Cyg",314.5407,41.2702,3.94,0.03,"A1Vn",374],["α Mon","","Mon",115.6283,-9.6147,3.94,1.02,"K0III",148],["Asellus Australis","δ Cnc","Cnc",131.5469,18.0551,3.94,1.08,"K0III",131],["Wurren","ζ Phe","Phe",17.3731,-55.1046,3.94,-0.12,"B6V",299],["3 Pup","","Pup",116.218,-29.0197,3.94,0.16,"A2Iab",0],["ζ UMa","","UMa",201.2503,54.7826,3.95,0.13,"A1",78.8],["50 Cas","","Cas",31.4393,72.5477,3.95,-0.0,"A2V",157],["ν² CMa","","CMa",99.4601,-19.2803,3.95,1.04,"K1III+",64.4],["η Col","","Col",89.9897,-42.8149,3.96,1.15,"K0III",472],["HR 3579","","Lyn",135.5874,41.6763,3.96,0.46,"F5V",52.4],["Arkab Prior","β¹ Sgr","Sgr",291.1343,-44.4065,3.96,-0.09,"B9V",314],["48 Per","","Per",62.649,47.7806,3.96,-0.03,"B3Ve",477],["Rukbat","α Sgr","Sgr",291.4292,-40.5635,3.96,-0.1,"B8V",182],["98 Aqr","","Aqr",351.0897,-19.9556,3.96,1.08,"K0III",163],["32 Cyg","","Cyg",304.0729,47.7967,3.96,1.45,"K3Ib-I",1059],["HR 3663","","Car",137.9697,-62.4263,3.96,-0.18,"B3IV",543],["δ Vol","","Vol",109.2026,-68.0056,3.97,0.76,"F6II",738],["λ Peg","","Peg",341.9526,23.7057,3.97,1.07,"G8II-I",365],["Beemim","43 Eri","Eri",66.2584,-33.9567,3.97,1.47,"K4III",296],["χ Lup","","Lup",238.1625,-33.7056,3.97,-0.04,"B9.5II",195],["β Pyx","","Pyx",130.2852,-35.4036,3.97,0.94,"G5II/I",416],["δ¹ Gru","","Gru",337.7106,-43.3593,3.97,1.02,"G6/G8I",309],["ρ Cen","","Cen",183.2624,-52.5159,3.97,-0.16,"B3V",379],["ε Pav","","Pav",300.9016,-72.8365,3.97,-0.03,"A0V",105],["ν Aur","","Aur",88.3321,39.1534,3.97,1.13,"K0III",230],["ρ Cyg","","Cyg",323.745,45.7099,3.98,0.89,"G8III",124],["Menkib","ξ Per","Per",60.173,35.8649,3.98,0.02,"O7.5Ia",1245],["γ Mon","","Mon",94.0372,-6.2849,3.99,1.32,"K3III",498],["HR 4102","","Car",156.2287,-74.1668,3.99,0.37,"F2IV",52.9],["Alcor","80 UMa","UMa",201.5705,54.8505,3.99,0.17,"A5V",81.7],["υ Cet","","Cet",30.3134,-20.9505,3.99,1.55,"K5/M0I",293],["γ Tuc","","Tuc",349.7396,-58.0901,3.99,0.41,"F1III",75.2],["α Vol","","Vol",135.7146,-66.5023,4.0,0.14,"Am",125],["Jabbah","ν Sco","Sco",243.385,-19.5274,4.0,0.08,"B2IV",474],["ι Leo","","Leo",171.3258,10.3832,4.0,0.42,"F2IV",77.2],["41 Cyg","","Cyg",307.6198,30.4583,4.01,0.4,"F5II",769],["HR 5471","","Cen",220.904,-37.9056,4.01,-0.16,"B2.5V",339],["φ Per","","Per",26.3345,50.8211,4.01,-0.1,"B2Vpe",718],["ω CMa","","CMa",108.9717,-26.8202,4.01,-0.15,"B2IV/V",911],["μ Eri","","Eri",71.7074,-3.2081,4.01,-0.15,"B5IV",522],["γ² Nor","","Nor",245.4587,-50.2177,4.01,1.08,"G8III",129],["ζ Pav","","Pav",281.5289,-71.4008,4.01,1.13,"K2III",218],["Mekbuda","ζ Gem","Gem",106.4198,20.5291,4.01,0.9,"G3Ibv",1376],["θ Dra","","Dra",240.5981,58.4952,4.01,0.53,"F8IV-V",68.6],["ε Aql","","Aql",285.2064,15.1061,4.02,1.08,"K2III",155],["Alchiba","α Crv","Crv",182.4464,-24.8766,4.02,0.33,"F0IV/V",48.7],["γ Pyx","","Pyx",132.9145,-27.8094,4.02,1.27,"K3III",207],["12 Aql","","Aql",285.7737,-5.6997,4.02,1.08,"K1IIIv",144],["γ Tri","","Tri",34.7247,33.9683,4.03,0.02,"A1Vnn",112],["β Cam","","Cam",76.4467,60.4774,4.03,0.92,"G0Ib",872],["μ¹ Cru","","Cru",194.0425,-57.3213,4.03,-0.18,"B2IV-V",414],["ι Cnc","","Cnc",132.0738,28.6611,4.03,1.01,"G8Iab:",331],["ω Psc","","Psc",0.1685,7.01,4.03,0.42,"F4IV",104],["Aldulfin","ε Del","Del",308.6196,11.3948,4.03,-0.12,"B6III",330],["70 Oph","","Oph",271.6977,2.497,4.03,0.86,"K0V",16.6],["Beid","ο¹ Eri","Eri",63.2903,-6.7703,4.04,0.33,"F2II-I",122],["ν Vir","","Vir",176.8052,6.3808,4.04,1.5,"M0III",294],["θ Boo","","Boo",216.525,51.7291,4.04,0.5,"F7V",47.4],["η Aqr","","Aqr",339.1793,0.0198,4.04,-0.08,"B9IV-V",168],["τ² Aqr","","Aqr",342.748,-13.4522,4.05,1.57,"K5III",318],["σ Leo","","Leo",170.6255,5.8837,4.05,-0.06,"B9.5Vs",220],["HR 3477","","Vel",131.3367,-42.7463,4.05,0.87,"G5III",229],["ι Per","","Per",47.7471,49.7122,4.05,0.59,"G0V",34.4],["α Cha","","Cha",124.449,-77.0026,4.05,0.41,"F5III",63.8],["υ Boo","","Boo",207.689,15.6674,4.05,1.52,"K5IIIv",263],["ρ Lup","","Lup",219.9213,-49.5395,4.05,-0.15,"B5V",316],["ψ Cen","","Cen",215.5448,-38.0057,4.05,-0.03,"A0IV",259],["ε Mus","","Mus",184.7579,-68.108,4.06,1.6,"M5III",301],["ο² Ori","","Ori",74.4659,13.5541,4.06,1.16,"K2III",186],["HR 5485","","Cen",221.3219,-35.2861,4.06,1.36,"K3III",209],["ζ Cru","","Cru",184.9738,-64.1502,4.06,-0.17,"B2.5V",358],["γ Crt","","Crt",171.5522,-17.8298,4.06,0.22,"A9V",82.3],["ε¹ Ara","","Ara",255.4261,-53.1981,4.06,1.45,"K4III",361],["υ Gem","","Gem",114.388,26.8345,4.06,1.54,"K5III",271],["λ Lup","","Lup",227.6602,-45.3798,4.07,-0.16,"B3V",777],["δ Cep","","Cep",337.5401,58.5514,4.07,0.78,"G2Ibva",865],["β Cir","","Cir",229.9029,-58.8977,4.07,0.09,"A3V",99.7],["Syrma","ι Vir","Vir",214.3518,-6.1257,4.07,0.51,"F7V",72.5],["HR 3825","","Car",143.8034,-59.3486,4.08,-0.01,"B5II",1326],["Alkes","α Crt","Crt",165.267,-18.4404,4.08,1.08,"K1III",159],["δ Cet","","Cet",40.2109,0.4414,4.08,-0.21,"B2IV",650],["1 Peg","","Peg",320.8282,19.9191,4.08,1.11,"K1III",156],["τ³ Eri","","Eri",45.8902,-23.5219,4.08,0.16,"A4V",88.6],["ζ And","","And",12.1873,24.4109,4.08,1.1,"K1II",189],["θ Cap","","Cap",316.8582,-17.126,4.08,-0.01,"A1V",162],["δ Hyi","","Hyi",35.5574,-68.5393,4.08,0.03,"A3V",140],["θ CMa","","CMa",103.8554,-12.0737,4.08,1.42,"K4III",261],["13 Lyr","","Lyr",284.0354,43.9822,4.08,1.4,"M5IIIv",298],["Gudja","κ Ser","Ser",237.4834,18.0613,4.09,1.62,"M1III",382],["φ² Ori","","Ori",84.5909,9.3028,4.09,0.95,"G8III-",117],["HR 3055","","Pup",117.5115,-46.4411,4.1,-0.16,"B0III",1647],["θ Per","","Per",41.5059,49.3386,4.1,0.51,"F7V",36.3],["Titawin","υ And","And",24.5912,41.537,4.1,0.54,"F8V",44.0],["ζ Tel","","Tel",277.7173,-49.0531,4.1,0.99,"G8/K0I",126],["β CrA","","CrA",287.962,-39.2961,4.1,1.16,"K0II/I",474],["ζ Gru","","Gru",345.6076,-52.6115,4.11,0.96,"G8III",109],["HR 4522","","Cen",176.9526,-61.3258,4.11,0.9,"G0II",390],["Zhang","υ¹ Hya","Hya",148.1884,-14.9719,4.11,0.92,"G6/G8I",264],["Meridiana","α CrA","CrA",287.8178,-37.8606,4.11,0.04,"A0/A1V",125],["HR 3426","","Vel",129.6442,-43.0829,4.11,0.11,"A6II",1822],["Muliphein","γ CMa","CMa",106.2394,-15.6743,4.11,-0.11,"B8II",442],["γ Cha","","Cha",158.9405,-78.7453,4.11,1.58,"M0III",418],["ε TrA","","TrA",234.7943,-66.4031,4.11,1.16,"K0III",202],["ι Eri","","Eri",40.428,-39.7431,4.11,1.01,"K0III",151],["μ Ori","","Ori",90.9605,9.645,4.12,0.17,"Am...",155],["ω Cap","","Cap",313.3494,-26.8182,4.12,1.63,"K4III",843],["δ² Gru","","Gru",337.8323,-43.6128,4.12,1.57,"M4.5II",330],["ο Vir","","Vir",181.6396,8.5859,4.12,0.97,"G8III",163],["μ Per","","Per",64.2135,48.4739,4.12,0.94,"G0Ib..",901],["ι Sgr","","Sgr",299.2706,-41.7963,4.12,1.06,"K0III",182],["ε Hyi","","Hyi",40.0013,-68.1539,4.12,-0.06,"B9III",152],["β Oct","","Oct",342.1531,-81.2414,4.13,0.21,"A9IV/V",149],["ι Psc","","Psc",355.3287,5.7701,4.13,0.51,"F7V",44.7],["ψ Cap","","Cap",311.9149,-25.1739,4.13,0.43,"F5V",47.9],["ν Gem","","Gem",97.6341,20.1929,4.13,-0.12,"B6III",545],["θ Lib","","Lib",238.8347,-16.8051,4.13,1.0,"K0III",168],["29 Ori","","Ori",81.3063,-7.7857,4.13,0.94,"G8III",157],["κ Peg","","Peg",326.4619,25.7679,4.14,0.42,"F5IV",112],["ε CrB","","CrB",239.6715,26.8026,4.14,1.23,"K3III",221],["η Cru","","Cru",182.0708,-64.7614,4.14,0.35,"F2III",64.4],["Merope","23 Tau","Tau",56.9762,24.0289,4.14,-0.05,"B6IV",380],["θ CrB","","CrB",233.4998,31.271,4.14,-0.13,"B6Vnn",375],["5 Tau","","Tau",53.085,13.0256,4.14,1.11,"K0II-I",342],["1 Lac","","Lac",334.2821,37.8815,4.14,1.45,"K3III",621],["δ Hya","","Hya",129.7643,5.6097,4.14,0.0,"A1Vnn",160],["ρ Her","","Her",261.1495,37.123,4.15,-0.01,"B9.5II",393],["κ And","","And",355.4305,44.4808,4.15,-0.07,"B9IVn",168],["δ Mon","","Mon",108.3044,-0.5386,4.15,-0.01,"A2V",384],["44 Oph","","Oph",261.9977,-24.1972,4.16,0.28,"A3IV:m",83.2],["1 Gem","","Gem",91.433,23.2593,4.16,0.83,"G7III",155],["ρ Gem","","Gem",112.7032,31.7295,4.16,0.32,"F0V...",58.9],["HR 1195","","Eri",57.6117,-36.1214,4.17,0.93,"G8III",210],["κ Cas","","Cas",8.6321,63.0777,4.17,0.13,"B1Ia",0],["Ancha","θ Aqr","Aqr",334.5575,-7.6504,4.17,0.98,"G8III-",187],["ε PsA","","PsA",340.5289,-26.9047,4.18,-0.1,"B8V",487],["Xuange","λ Boo","Boo",214.3477,45.9675,4.18,0.09,"A0sh",99.0],["HR 6166","","Sco",249.5309,-35.3073,4.18,1.53,"K5III",343],["Kang","κ Vir","Vir",213.5783,-10.3958,4.18,1.32,"K3III",255],["ε Cep","","Cep",334.0037,57.1764,4.18,0.28,"F0IV",85.4],["2 Cen","","Cen",207.7475,-34.582,4.19,1.52,"M5III",183],["110 Her","","Her",281.7008,20.5734,4.19,0.48,"F6V",62.7],["ξ Peg","","Peg",342.0046,12.3094,4.2,0.5,"F7V",53.2],["β LMi","","LMi",157.3518,36.5704,4.2,0.91,"G8III-",154],["32 Ori","","Ori",83.0509,5.9662,4.2,-0.14,"B5V",303],["σ Her","","Her",248.7397,42.3837,4.2,-0.01,"B9Vvar",315],["δ PsA","","PsA",344.3523,-32.3975,4.2,0.95,"G8III",154],["11 Pup","","Pup",119.4997,-22.9524,4.2,0.72,"F7/F8I",522],["HR 1035","","Cam",52.8095,60.03,4.21,0.42,"B9Ia",1941],["θ Cep","","Cep",307.5053,63.0837,4.21,0.2,"A7III",136],["γ Pav","","Pav",322.1495,-65.2442,4.21,0.49,"F6V",30.2],["κ¹ Tau","","Tau",66.7383,22.3523,4.21,0.14,"A7IV-V",154],["ε UMi","","UMi",250.8378,81.9897,4.21,0.9,"G5IIIv",304],["φ Dra","","Dra",275.0935,71.3513,4.22,-0.09,"A0p",303],["θ Lup","","Lup",242.085,-36.8721,4.22,-0.18,"B2.5Vn",414],["σ Cyg","","Cyg",319.6147,39.5068,4.22,0.1,"B9Iab",2886],["HR 3090","","Pup",118.5204,-48.1731,4.22,-0.13,"B0.5Ib",1656],["β Sct","","Sct",282.1451,-4.7174,4.22,1.09,"G5II..",916],["δ² Lyr","","Lyr",283.858,36.9337,4.22,1.57,"M4IIva",736],["φ Aqr","","Aqr",348.9236,-5.9058,4.22,1.54,"M2III",202],["λ Pav","","Pav",283.6657,-62.1536,4.22,-0.15,"B2II-I",1431],["χ Oph","","Oph",247.1409,-18.5142,4.22,0.22,"B2Vne",525],["τ Eri","","Eri",56.9973,-23.173,4.22,0.43,"F3/F5V",57.5],["16 Per","","Per",43.0668,38.426,4.22,0.34,"F2III",121],["52 Cyg","","Cyg",311.6894,30.8178,4.22,1.05,"K0III",201],["ζ Tuc","","Tuc",5.3529,-64.7193,4.23,0.58,"F9V",28.0],["σ Gem","","Gem",116.2411,28.8171,4.23,1.12,"K1III",125],["τ Vir","","Vir",210.7494,1.4174,4.23,0.12,"A3V",225],["π² Cyg","","Cyg",326.9439,49.433,4.23,-0.12,"B3III",1106],["γ CrA","","CrA",287.0516,-37.0228,4.23,0.52,"F7IV-V",56.4],["β Aps","","Aps",251.7342,-77.5675,4.23,1.06,"K0III",157],["μ Cep","","Cep",326.08,58.9023,4.23,2.24,"M2Ia",0],["β Com","","Com",198.2772,27.7445,4.23,0.57,"G0V",29.8],["1 Cen","","Cen",206.8006,-33.1767,4.23,0.39,"F3V",63.3],["φ Her","","Her",242.4015,44.8666,4.23,-0.04,"B9MNp.",204],["κ Eri","","Eri",36.989,-47.5859,4.24,-0.14,"B5IV",508],["HR 6143","","Sco",248.2799,-34.7596,4.24,-0.17,"B2III-",555],["HR 285","","Cep",18.2321,86.3975,4.24,1.21,"K2II-I",280],["β Cha","","Cha",184.991,-79.4592,4.24,-0.12,"B5Vn",298],["Chara","β CVn","CVn",188.7494,41.2138,4.24,0.59,"G0V",27.5],["ο Ser","","Ser",265.7263,-12.8872,4.24,0.09,"A2Va",173],["π Cet","","Cet",41.3462,-13.7477,4.24,-0.12,"B7IV",393],["ψ¹ Aqr","","Aqr",349.3196,-8.943,4.24,1.11,"K0III",150],["ν Cep","","Cep",326.5535,61.2438,4.25,0.47,"A2Iava",0],["λ Eri","","Eri",77.604,-8.722,4.25,-0.19,"B2IVn",811],["58 Per","","Per",69.6334,41.3166,4.25,1.17,"G8II",797],["Alsciaukat","31 Lyn","Lyn",126.16,43.1008,4.25,1.55,"K5III",382],["5 UMi","","UMi",216.8754,75.5782,4.25,1.43,"K4III",359],["λ Per","","Per",62.1426,50.4205,4.25,-0.01,"A0IVn",422],["88 Tau","","Tau",69.2782,10.213,4.25,0.18,"A5m",156],["κ Tuc","","Tuc",19.1643,-68.7356,4.25,0.48,"F6IV",68.3],["HR 4889","","Cen",193.7286,-40.3225,4.25,0.22,"A4IV",149],["Torcular","ο Psc","Psc",26.6992,9.29,4.26,0.94,"K0III",279],["α Cam","","Cam",74.1759,66.3838,4.26,-0.01,"O9.5Ia",0],["Acubens","α Cnc","Cnc",134.9835,11.7535,4.26,0.14,"A5m",188],["φ And","","And",17.7634,47.3823,4.26,0.01,"B7III",717],["Kurhah","ξ Cep","Cep",331.1392,64.7577,4.26,0.38,"Am",96.5],["82 G. Eri","","Eri",50.2437,-42.9699,4.26,0.71,"G8V",19.7],["γ Dor","","Dor",64.1806,-51.4208,4.26,0.31,"F4III",66.7],["τ Eri","","Eri",53.7399,-21.5455,4.26,-0.11,"B9V",293],["HR 6546","","Sco",264.5936,-38.6511,4.26,1.07,"G8/K0I",166],["95 Her","","Her",270.6579,21.5974,4.26,0.41,"G5",417],["μ Cet","","Cet",41.5948,10.2245,4.27,0.31,"F1III-",84.1],["ε Psc","","Psc",16.0805,8.0322,4.27,0.95,"K0III",182],["μ Lup","","Lup",230.0976,-47.9706,4.27,-0.09,"B8V",336],["ξ² Cen","","Cen",197.1181,-50.0475,4.27,-0.18,"B1.5V",467],["τ Tau","","Tau",70.9598,23.0054,4.27,-0.11,"B3V",398],["θ Psc","","Psc",352.3284,6.5248,4.27,1.06,"K1III",149],["90 Tau","","Tau",69.9105,12.5618,4.27,0.12,"A6V",154],["μ Tau","","Tau",64.2441,8.9567,4.27,-0.05,"B3IV",456],["γ² Del","","Del",311.9721,16.2212,4.27,1.04,"K1IV",126],["Arkab Posterior","β² Sgr","Sgr",291.2817,-44.7472,4.27,0.35,"F2III",134],["α Ant","","Ant",157.0919,-31.2034,4.28,1.43,"K4III",366],["33 Cyg","","Cyg",303.5029,56.6496,4.28,0.11,"A3IV-V",159],["θ Gru","","Gru",347.0904,-43.3768,4.28,0.42,"F5me..",132],["45 Oph","","Oph",262.2622,-29.8884,4.28,0.4,"F3III",112],["π² Peg","","Peg",332.7919,33.3091,4.28,0.47,"F5III",263],["ι Cap","","Cap",320.9296,-16.7203,4.28,0.89,"G8III",197],["υ Tau","","Tau",66.9744,22.8714,4.28,0.26,"A8Vn",154],["HR 3751","","Dra",145.1656,81.2058,4.28,1.49,"K3III",994],["φ Oph","","Oph",248.1649,-16.6683,4.29,0.92,"G8/K0I",244],["ι And","","And",354.8611,43.415,4.29,-0.08,"B8V",499],["β Hya","","Hya",178.5634,-34.0556,4.29,-0.1,"Ap",310],["λ Lep","","Lep",80.1994,-13.1513,4.29,-0.23,"B0.5IV",852],["β PsA","","PsA",338.2512,-32.2094,4.29,0.01,"A1V",143],["ι Aqr","","Aqr",331.9663,-13.7401,4.29,-0.07,"B8V",175],["HR 4180","","Vel",160.0919,-55.7418,4.29,1.02,"G2II",841],["ζ UMi","","UMi",235.7919,77.7118,4.29,0.04,"A3Vn",369],["10 Tau","","Tau",54.557,0.484,4.29,0.57,"F9V",45.5],["54 Leo","","Leo",164.2608,24.6077,4.3,0.02,"A1",287],["HR 4537","","Cen",177.7477,-63.9358,4.3,-0.15,"B3V",595],["δ³ Tau","","Tau",66.7567,17.9863,4.3,0.05,"A2IV",149],["π Aur","","Aur",90.4757,45.9361,4.3,1.7,"M3IIva",752],["Taygeta","19 Tau","Tau",56.6978,24.5484,4.3,-0.11,"B6V",409],["HR 5358","","Cen",215.5494,-56.5069,4.3,0.08,"B6Ib",1226],["ξ² Cet","","Cet",37.393,8.5774,4.3,-0.05,"B9III",193],["η Hya","","Hya",131.1521,3.3019,4.3,-0.19,"B3V...",587],["α Scl","","Scl",14.9701,-29.2148,4.3,-0.15,"B7IIIp",777],["η Crv","","Crv",188.3601,-16.3425,4.3,0.39,"F2V",59.6],["υ Leo","","Leo",174.5765,-0.9703,4.3,0.98,"G9III",182],["α¹ Cap","","Cap",304.7785,-12.4244,4.3,0.93,"G3Ib",569],["HR 1189","","Eri",57.3942,-37.5405,4.3,-0.04,"A+...",165],["δ Oct","","Oct",217.8785,-83.7853,4.31,1.3,"K2III",299],["HR 3457","","Car",130.3001,-59.8562,4.31,-0.12,"B1.5II",1443],["ω² Sco","","Sco",242.241,-20.9382,4.31,0.83,"G6/G8I",291],["71 Aql","","Aql",309.9263,-1.0109,4.31,0.95,"G8III",337],["Alkalurops","μ¹ Boo","Boo",231.3731,37.2855,4.31,0.31,"F0V",113],["119 Tau","","Tau",83.442,18.6115,4.32,2.06,"M2Ib",1792],["ν Ser","","Ser",260.58,-12.8715,4.32,0.04,"A0/A1V",203],["ψ Per","","Per",54.5964,48.2784,4.32,-0.06,"B5Ve",583],["θ¹ Cru","","Cru",181.0985,-63.4604,4.32,0.28,"Am",235],["12 Hya","","Hya",131.907,-13.646,4.32,0.9,"G8III",245],["3 Cen","","Cen",208.3412,-33.1244,4.32,-0.15,"B5",344],["54 Eri","","Eri",70.4006,-19.6224,4.32,1.6,"M3/M4I",369],["ο Lup","","Lup",223.345,-43.6832,4.32,-0.15,"B5IV",404],["Diadem","α Com","Com",197.8191,17.3898,4.32,0.46,"F5V",58.1],["Alterf","λ Leo","Leo",143.3069,22.8497,4.32,1.54,"K5IIIv",329],["κ Aur","","Aur",94.2667,29.4857,4.32,1.02,"G8IIIv",177],["Alula Australis","ξ UMa","UMa",169.8987,31.3793,4.33,0.59,"G0",34.0],["Guniibuu","36 Oph","Oph",259.2458,-26.6393,4.33,0.85,"K2:III",19.4],["π Pav","","Pav",272.7826,-63.6637,4.33,0.23,"Am",130],["γ CMi","","CMi",112.4013,8.8698,4.33,1.43,"K3III",318],["κ Lyr","","Lyr",275.1978,36.0779,4.33,1.16,"K2IIIv",252],["τ² Lup","","Lup",216.9744,-45.4975,4.33,0.43,"A7:+..",319],["HR 4888","","Cen",193.6571,-49.087,4.33,1.34,"K3/K4I",294],["111 Her","","Her",282.048,18.2128,4.34,0.15,"A5III",94.2],["ε And","","And",9.9908,29.4552,4.34,0.87,"G5III.",164],["ζ¹ Lyr","","Lyr",281.4215,37.6342,4.34,0.19,"Am",156],["9 Peg","","Peg",326.4418,17.4727,4.34,1.16,"G5Ib",927],["ω Lup","","Lup",234.9623,-42.6521,4.34,1.41,"K4.5II",219],["υ² Cen","","Cen",210.8478,-45.7305,4.34,0.6,"F6II",1269],["σ Oph","","Oph",261.9577,4.1194,4.34,1.48,"K3IIva",901],["θ Cha","","Cha",124.951,-77.5689,4.34,1.16,"K0III-",155],["θ Cas","","Cas",18.1833,55.2901,4.34,0.17,"A7Vvar",134],["HR 3836","","Vel",144.4442,-49.4746,4.34,0.17,"A5V",105],["δ Dor","","Dor",86.2059,-65.7257,4.34,0.22,"A7V",150],["5 Lac","","Lac",337.66,47.8432,4.34,1.68,"M0II",1647],["ξ¹ CMa","","CMa",98.2403,-23.4392,4.34,-0.24,"B1III",1382],["HR 3696","","Car",139.2375,-57.6532,4.34,1.6,"M1III",488],["π And","","And",9.576,33.8649,4.34,-0.12,"B5V",598],["Botein","δ Ari","Ari",48.2876,19.8251,4.35,1.03,"K2IIIv",170],["ξ Pav","","Pav",276.4163,-61.4782,4.35,1.46,"M1III",469],["π² Ori","","Ori",73.0147,8.9435,4.35,0.01,"A1Vn",224],["ε Vol","","Vol",122.0014,-68.695,4.35,-0.11,"B6IV",562],["γ Com","","Com",187.0638,28.1214,4.35,1.13,"K2IIIC",167],["Yildun","δ UMi","UMi",260.9523,86.5663,4.35,0.02,"A1Vn",172],["2 Lup","","Lup",229.8626,-30.2442,4.35,1.1,"K1II/I",326],["HR 2435","","Car",98.8902,-52.9981,4.35,-0.02,"B9III",1365],["ι PsA","","PsA",326.6294,-32.9035,4.35,-0.05,"B9.5V",204],["ρ Hya","","Hya",132.4587,5.7383,4.35,-0.04,"A0Vn",354],["θ Lyr","","Lyr",289.3221,38.1823,4.35,1.26,"K0II",832],["15 Lyn","","Lyn",104.8909,58.3846,4.35,0.85,"G5III-",178],["σ Per","","Per",53.1141,48.0844,4.36,1.37,"K3III",360],["β¹ Tuc","","Tuc",8.1865,-62.8125,4.36,-0.06,"B9V",135],["ι Aql","","Aql",294.5228,-1.2259,4.36,-0.08,"B5III",391],["37 Tau","","Tau",61.5667,22.1522,4.36,1.06,"K0III",187],["ζ Mon","","Mon",122.4814,-3.0627,4.36,0.97,"G2Ib",1059],["η Phe","","Phe",11.134,-57.3181,4.36,0.02,"A0IV",246],["ω Eri","","Eri",73.5496,-5.4103,4.36,0.26,"A9IV",235],["ι CMa","","CMa",104.3299,-17.0904,4.36,-0.06,"B3Ib/I",2509],["γ Col","","Col",89.6193,-35.2819,4.36,-0.17,"B2.5IV",870],["χ Cen","","Cen",211.9188,-41.3053,4.36,-0.2,"B2V",510],["κ Lep","","Lep",78.6141,-12.9118,4.36,-0.09,"B7V",728],["ξ¹ Cet","","Cet",33.6021,8.9697,4.36,0.88,"G8II:",383],["102 Her","","Her",272.473,20.8205,4.37,-0.16,"B2IV",916],["τ CMa","","CMa",109.9519,-25.0044,4.37,-0.13,"O9Ib",2992],["θ¹ Sgr","","Sgr",300.3638,-35.2024,4.37,-0.15,"B2.5IV",519],["30 Psc","","Psc",0.8298,-5.8669,4.37,1.63,"M3III",432],["HR 4293","","Vel",165.344,-42.3685,4.37,0.12,"A3IV",196],["κ Col","","Col",94.374,-35.1508,4.37,0.98,"G8II",183],["99 Aqr","","Aqr",351.8588,-20.4965,4.38,1.46,"K4III",283],["β Scl","","Scl",353.5962,-37.6714,4.38,-0.1,"B9.5IV",174],["κ Cep","","Cep",301.9865,77.79,4.38,-0.05,"B9III",315],["θ Vir","","Vir",197.8311,-5.6798,4.38,-0.01,"A1V",316],["χ¹ Ori","","Ori",88.9885,20.2785,4.39,0.59,"G0V",28.3],["β Sge","","Sge",295.5598,17.5391,4.39,1.04,"G8II",440],["φ¹ Ori","","Ori",84.0692,9.5053,4.39,-0.16,"B0IV..",1087],["HR 1155","","Cam",57.9943,65.6047,4.39,1.87,"M1III",796],["31 Leo","","Leo",152.3271,9.8666,4.39,1.45,"K4III",295],["HR 3145","","CMi",120.9108,2.2599,4.39,1.25,"K2III",254],["ψ Phe","","Phe",28.6765,-46.1738,4.39,1.6,"M4III",342],["θ Ind","","Ind",320.4344,-53.3366,4.39,0.19,"A5V",98.8],["Sham","α Sge","Sge",295.3203,18.0765,4.39,0.78,"G0II",425],["ε Mon","","Mon",96.2932,4.5772,4.39,0.21,"A5IV",122],["ι Oph","","Oph",253.8158,10.1236,4.39,-0.09,"B8V",245],["ξ Oph","","Oph",260.6493,-21.1389,4.39,0.39,"F2/F3V",56.6],["110 Vir","","Vir",226.0605,1.9887,4.39,1.03,"K0III",195],["δ Ind","","Ind",329.9255,-54.8652,4.4,0.3,"F0IV",188],["ο Pup","","Pup",117.2971,-26.0045,4.4,-0.07,"B1IV:n",1418],["κ Pav","","Pav",284.9169,-67.1962,4.4,0.53,"F5Ib-I",500],["η And","","And",14.6569,23.5601,4.4,0.94,"G8III-",230],["16 Pup","","Pup",122.5527,-19.3241,4.4,-0.16,"B5V",465],["HR 5378","","Cen",216.1702,-39.6314,4.41,-0.18,"B2V",457],["HR 2554","","Car",102.6077,-53.6543,4.41,0.9,"G6II",545],["π Cep","","Cep",347.1869,75.531,4.41,0.8,"G2III",247],["γ Scl","","Scl",350.0622,-32.3874,4.41,1.11,"K1III",182],["Maasym","λ Her","Her",262.9526,26.0923,4.41,1.43,"K3IIIv",369],["ψ² Aqr","","Aqr",349.8198,-9.0375,4.41,-0.14,"B5Vn",402],["ν Her","","Her",269.8793,30.1887,4.41,0.38,"F2II",861],["τ Gem","","Gem",108.2059,30.1992,4.41,1.26,"K2III",321],["υ Cyg","","Cyg",319.7523,35.0093,4.41,-0.1,"B2Vne",642],["β Lac","","Lac",336.1519,52.3625,4.42,1.01,"G9III",170],["Alkarab","υ Peg","Peg",351.6765,23.5503,4.42,0.62,"F8IV",170],["60 Leo","","Leo",165.9351,20.0371,4.42,0.05,"A1m",127],["ν Ori","","Ori",92.2714,14.7629,4.42,-0.16,"B3IV",516],["HR 3243","","Pup",123.7476,-40.4301,4.42,1.17,"K1II/I",298],["68 Oph","","Oph",270.7746,1.3065,4.42,0.05,"A2Vn",293],["HR 2748","","Pup",108.5869,-44.6841,4.42,1.33,"M5e",209],["58 Hya","","Hya",222.9631,-28.0691,4.42,1.37,"K3III",331],["λ Ser","","Ser",236.9329,7.2717,4.42,0.6,"G0Vvar",39.5],["27 CMa","","CMa",108.8336,-26.3998,4.42,-0.17,"B3III",1735],["ν³ CMa","","CMa",99.7641,-18.2622,4.42,1.14,"K0II/I",421],["δ Del","","Del",311.174,15.1711,4.43,0.3,"A7IIIp",223],["62 Sgr","","Sgr",301.0707,-27.634,4.43,1.64,"M4III",449],["7 Cam","","Cam",74.8551,53.7914,4.43,-0.02,"A1V",372],["Aladfar","η Lyr","Lyr",288.6651,39.1929,4.43,-0.15,"B2.5IV",1388],["39 Cyg","","Cyg",306.2298,32.2771,4.43,1.33,"K3III",250],["π Eri","","Eri",56.8492,-12.0201,4.43,1.6,"M1III",481],["Keid","ο² Eri","Eri",64.1232,-7.6133,4.43,0.82,"K1V",16.3],["3 Aqr","","Aqr",312.2834,-4.9291,4.43,1.64,"M3IIIv",586],["ε Ret","","Ret",64.2365,-59.2391,4.44,1.08,"K2IV",59.5],["HR 3225","","Pup",123.0764,-39.6988,4.44,1.59,"K4III",1699],["7 Cet","","Cet",3.996,-18.7862,4.44,1.64,"M1III",447],["Anser","α Vul","Vul",292.4522,24.7201,4.44,1.5,"M0",297],["α Cae","","Cae",70.3544,-41.8145,4.44,0.34,"F2V",65.8],["HR 2906","","Pup",113.797,-22.3549,4.44,0.52,"F6V",82.5],["2 Lyn","","Lyn",95.4898,58.9978,4.44,0.03,"A2Vs",157],["σ Lup","","Lup",218.6048,-50.5729,4.44,-0.18,"B2III",575],["δ Psc","","Psc",12.515,7.7288,4.44,1.5,"K5III",311],["HR 3270","","Pup",124.8871,-36.7427,4.44,0.22,"A4m...",93.4],["HR 3591","","Vel",135.2703,-41.3578,4.45,0.65,"Fp",210],["ι Lep","","Lep",78.384,-11.8394,4.45,-0.1,"B8V",232],["φ Leo","","Leo",169.5024,-3.7968,4.45,0.21,"A7IVn",184],["Minchir","σ Hya","Hya",130.0352,3.2468,4.45,1.22,"K2III",373],["ω Oph","","Oph",248.4278,-21.5208,4.45,0.13,"Ap",169],["δ² Cha","","Cha",161.5007,-80.68,4.45,-0.19,"B2.5IV",351],["ν Psc","","Psc",25.7034,5.6208,4.45,1.35,"K3III",363],["μ Aql","","Aql",293.8458,7.4371,4.45,1.18,"K3III",108],["τ Dra","","Dra",288.7572,73.4038,4.45,1.26,"K3III",146],["β For","","For",42.5498,-32.2958,4.45,0.98,"G8III",173],["HR 4159","","Car",159.1531,-57.6954,4.45,1.6,"K3/K4I",1177],["ξ Ori","","Ori",93.3618,14.2004,4.45,-0.18,"B3IV",607],["γ PsA","","PsA",343.4979,-32.7344,4.46,-0.04,"A0III",215],["β Crt","","Crt",168.2412,-22.9709,4.46,0.03,"A1V",340],["ρ Ori","","Ori",78.6697,2.8907,4.46,1.17,"K3III.",350],["ι Cas","","Cas",37.8222,67.5197,4.46,0.15,"A5p",133],["HR 4618","","Cen",182.3679,-50.8088,4.46,-0.16,"B2IIIn",438],["ε Nor","","Nor",247.2841,-47.6125,4.46,-0.07,"B4V",530],["15 UMa","","UMa",137.6815,51.4957,4.46,0.29,"Am",94.0],["32 Eri","","Eri",58.9062,-2.8782,4.46,0.67,"G8III",313],["16 Lib","","Lib",224.6426,-4.4529,4.47,0.32,"F0V",87.7],["λ Gru","","Gru",331.9256,-39.4143,4.47,1.35,"M0III",242],["κ Leo","","Leo",141.548,26.0667,4.47,1.22,"K2III",201],["σ Boo","","Boo",218.9584,29.6312,4.47,0.36,"F3Vwva",51.6],["13 Mon","","Mon",98.5842,7.3114,4.47,0.02,"A0Ib",0],["δ Equ","","Equ",318.9427,10.1157,4.47,0.53,"F5V+..",60.3],["26 UMa","","UMa",144.156,51.932,4.47,0.03,"A2V",262],["HR 3129","","Pup",119.7507,-49.3179,4.47,-0.18,"B1Vp",959],["τ¹ Eri","","Eri",41.5851,-18.4617,4.47,0.48,"F5/F6V",46.4],["HR 3643","","Car",136.2997,-72.7094,4.47,0.61,"F6II-I",401],["HR 4546","","Cen",178.1198,-45.321,4.47,1.28,"K4III",433],["λ CMa","","CMa",97.2884,-32.5983,4.47,-0.17,"B4V",424],["π Ori","","Ori",74.9809,1.7526,4.47,1.37,"K2IIva",945],["HR 999","","Ari",50.4875,29.1426,4.47,1.55,"K2II-I",543],["α Sex","","Sex",152.3233,-0.5021,4.48,-0.03,"A0III",283],["18 Mon","","Mon",102.3107,2.381,4.48,1.1,"K0III",368],["71 Tau","","Tau",66.9648,15.6762,4.48,0.26,"F0V...",160],["ο Cas","","Cas",11.5537,48.4289,4.48,-0.07,"B5III",703],["γ Ret","","Ret",60.3216,-62.0859,4.48,1.5,"M4III",469],["ψ Oph","","Oph",246.4145,-20.0972,4.48,1.0,"K0III",199],["γ Cir","","Cir",231.3777,-59.4137,4.48,0.17,"B5III",449],["Fumalsamakah","β Psc","Psc",346.3065,3.9632,4.48,-0.12,"B6Ve",408],["86 Aqr","","Aqr",347.0249,-23.5995,4.48,0.89,"G8III",216],["48 Cas","","Cas",31.0468,71.0337,4.49,0.16,"A3IV",115],["ω² Aqr","","Aqr",356.0236,-14.3983,4.49,-0.03,"B9V",149],["30 Gem","","Gem",101.3706,13.199,4.49,1.17,"K1III",289],["HR 3084","","Pup",118.3957,-38.9327,4.49,-0.19,"B2V",648],["θ Cyg","","Cyg",294.2882,50.2835,4.49,0.4,"F4V",59.8],["π¹ Boo","","Boo",220.4931,16.3059,4.49,-0.0,"B9p",306],["HR 2740","","Pup",108.3292,-46.8047,4.49,0.32,"F0IV",69.9],["υ¹ Eri","","Eri",68.6375,-29.7144,4.49,0.97,"K0III",127],["21 LMi","","LMi",152.246,35.1144,4.49,0.19,"A7V",92.1],["μ¹ Cyg","","Cyg",326.3322,28.8634,4.49,0.51,"F6V",72.5],["24 Cap","","Cap",317.1681,-24.8983,4.49,1.6,"K5/M0I",456],["ε Tuc","","Tuc",0.3185,-65.4298,4.49,-0.07,"B9IV",373],["λ Psc","","Psc",355.8499,1.926,4.49,0.2,"A7V",107],["HR 4074","","Vel",155.4761,-56.1773,4.5,-0.1,"B3III",1148],["36 Cap","","Cap",322.5573,-21.6904,4.5,0.89,"K0III",171],["23 Vul","","Vul",304.2169,27.897,4.5,1.26,"K3III",339],["ω Ori","","Ori",85.1466,4.1344,4.5,-0.1,"B3IIIe",1382],["11 Lac","","Lac",340.4203,44.4152,4.5,1.32,"K3III",333],["ν Aqr","","Aqr",317.7587,-11.2629,4.5,0.93,"G8III",159],["HR 8485","","Lac",333.755,39.8472,4.5,1.39,"K3III",482],["μ PsA","","PsA",332.4805,-32.8581,4.5,0.05,"A2V",136],["γ Pic","","Pic",87.5775,-56.1608,4.5,1.07,"K1III",177],["93 Leo","","Leo",177.3375,20.0716,4.5,0.55,"A",233],["HR 3498","","Car",131.8484,-56.868,4.5,-0.17,"B3Vne",605],["τ Boo","","Boo",207.1305,17.3258,4.5,0.51,"F7V",50.9],["ρ Dra","","Dra",300.7318,67.9493,4.51,1.31,"K3III",429],["τ Psc","","Psc",18.2819,30.2296,4.51,1.09,"K0III-",169],["δ Tuc","","Tuc",337.2964,-64.8304,4.51,-0.03,"B8V",251],["HR 3856","","Car",145.0212,-61.4487,4.51,-0.07,"B9V",226],["η Ind","","Ind",311.4922,-51.8241,4.51,0.28,"A6:var",78.8],["τ Aur","","Aur",87.7529,39.1873,4.51,0.95,"G8III",207],["σ And","","And",4.93,36.9319,4.51,0.05,"A2V",135],["ε Cap","","Cap",324.64,-19.346,4.51,-0.18,"B3V:p",1056],["ρ Cas","","Cas",358.9304,57.6468,4.51,1.19,"F8Iava",0],["ε Ant","","Ant",142.5853,-36.0683,4.51,1.41,"K3III",711],["ι Ser","","Ser",235.6834,19.5866,4.51,0.06,"A1V",190],["ε Tel","","Tel",273.299,-45.9468,4.52,1.01,"G5III",418],["Khambalia","λ Vir","Vir",215.1371,-13.4918,4.52,0.13,"A1V",186],["ψ Boo","","Boo",226.3955,26.8456,4.52,1.24,"K2III",246],["HR 5035","","Cen",201.0922,-61.1263,4.52,-0.14,"B3V",355],["Lilii Borea","39 Ari","Ari",42.3736,29.3555,4.52,1.11,"K1III",172],["HR 7955","","Cep",311.5024,57.6756,4.52,0.54,"F8IV-V",89.0],["2 Peg","","Peg",322.7875,23.7561,4.52,1.62,"M1III",394],["6 Lac","","Lac",337.909,43.2599,4.52,-0.09,"B2IV",1717],["υ Sgr","","Sgr",290.8107,-15.9031,4.52,0.08,"F2p",1782],["HR 5041","","Cen",201.4545,-64.6733,4.52,0.82,"G5III-",260],["HR 6493","","Oph",262.0097,-5.1079,4.53,0.39,"F3V",98.1],["HR 2113","","Ori",90.3456,-3.0753,4.53,1.2,"K2IIIv",421],["κ² Boo","","Boo",213.6079,51.6669,4.53,0.23,"A8IV",163],["7 And","","And",348.4429,49.5514,4.53,0.3,"F0V",80.2],["ν And","","And",12.8215,41.2227,4.53,-0.14,"B5V",618],["β² Tuc","","Tuc",8.1898,-62.8198,4.53,0.15,"A2V",168],["HR 2937","","Pup",114.5875,-35.0295,4.53,-0.08,"B8IV/V",360],["3 Sgr","","Sgr",267.3074,-27.8383,4.53,0.6,"F7II",985],["λ Cyg","","Cyg",312.1106,36.5893,4.53,-0.08,"B6IV",769],["24 UMa","","UMa",144.1945,69.7117,4.54,0.78,"G4III-",104],["55 Peg","","Peg",347.0851,9.5531,4.54,1.56,"M2III",329],["τ² Hya","","Hya",143.3331,-1.3028,4.54,0.11,"A3V",518],["59 Sgr","","Sgr",299.6423,-27.0975,4.54,1.46,"K3III",832],["ξ² CMa","","CMa",99.042,-22.9875,4.54,-0.04,"A0III",441],["10 LMi","","LMi",143.9595,36.2784,4.54,0.91,"G8III",185],["ξ Boo","","Boo",223.1534,18.9921,4.54,0.72,"G8V",21.9],["ι¹ Lib","","Lib",228.4343,-19.8902,4.54,-0.07,"Asp...",380],["φ² Lup","","Lup",231.2144,-36.9515,4.54,-0.15,"B4V",519],["70 Peg","","Peg",352.6243,12.907,4.54,0.94,"G8III",175],["16 Aur","","Aur",79.9795,33.3966,4.54,1.25,"K3III.",232],["2 Lac","","Lac",335.5312,46.6707,4.55,-0.1,"B6V",555],["γ¹ Cae","","Cae",76.3402,-35.4482,4.55,1.18,"K2III",181],["HR 1040","","Cam",53.0124,58.968,4.55,0.49,"A0Ia",2509],["HR 5781","","Lup",234.4309,-45.0448,4.55,-0.17,"B3IVp",428],["HR 2527","","Cam",105.9718,76.9379,4.55,1.36,"K4III",184],["ο Sco","","Sco",245.5589,-24.2309,4.55,0.76,"A4II/I",879],["11 Cep","","Cep",325.5744,71.4337,4.55,1.11,"K0III",182],["HR 6766","","Sgr",272.4404,-28.4516,4.55,0.94,"K0IIIC",339],["4 Lac","","Lac",336.399,49.6114,4.55,0.09,"B9Iab",2249],["6 CMi","","CMi",112.8175,11.9496,4.55,1.28,"K2III",572],["2 Cet","","Cet",1.2738,-17.1885,4.55,-0.05,"B9IVn",272],["φ UMa","","UMa",148.4728,53.939,4.55,0.04,"A3IV",509],["31 Vul","","Vul",313.3158,27.1975,4.56,0.83,"G8III",189],["17 Per","","Per",43.289,35.167,4.56,1.55,"K5III",467],["63 Cyg","","Cyg",316.8789,47.7559,4.56,1.57,"K4II",1032],["72 Leo","","Leo",169.1523,22.9506,4.56,1.66,"M3III",959],["136 Tau","","Tau",88.7486,27.6159,4.56,-0.01,"A0V",423],["δ Ret","","Ret",59.7928,-61.326,4.56,1.59,"M2III",526],["σ Ara","","Ara",264.409,-46.521,4.56,-0.02,"A0V",378],["τ¹ Lup","","Lup",216.9628,-45.3397,4.56,-0.15,"B2IV",1091],["HR 3612","","Lyn",137.0516,38.3445,4.56,1.04,"G8Ib-I",817],["ρ Oph","","Oph",246.7946,-23.506,4.57,0.23,"B2V",361],["HR 1106","","Eri",54.5117,-40.1888,4.57,1.02,"K0III",231],["Dziban","ψ¹ Dra","Dra",265.3684,72.1351,4.57,0.43,"F5IV-V",74.5],["113 Her","","Her",283.9668,22.6803,4.57,0.78,"G4III+",472],["Cujam","ω Her","Her",246.6601,13.974,4.57,0.0,"B9p",250],["δ CrA","","CrA",287.5475,-40.453,4.57,1.07,"K1III",179],["13 Vul","","Vul",298.6471,24.1503,4.57,-0.05,"B9.5II",335],["42 Ori","","Ori",84.1737,-4.823,4.58,-0.18,"B2III.",884],["10 Dra","","Dra",208.0516,64.5929,4.58,1.57,"M3III",371],["μ Oph","","Oph",264.8217,-8.1327,4.58,0.13,"B8II-I",755],["13 Sco","","Sco",243.4853,-27.9929,4.58,-0.17,"B2V",479],["HR 4975","","Cen",198.4926,-60.0608,4.58,-0.07,"B8V",379],["HR 4200","","Car",161.1386,-60.7061,4.58,1.7,"K3Ib",1140]];
+const LINES = [[31.38,42.46,17.8,35.76,10.19,31.01,2.44,29.24],[14.66,23.56,12.19,24.41,9.99,29.46,10.19,31.01,9.58,33.86,354.86,43.41,345.79,42.47],[354.86,43.41,355.43,44.48,354.72,46.61],[17.8,35.76,14.56,38.64,12.82,41.22,17.76,47.38,24.91,48.76],[355.43,44.48,356.84,46.57],[142.59,-36.07,157.09,-31.2,164.49,-37.28],[222.82,-79.15,246.1,-78.76,251.74,-77.56,249.41,-78.95],[312.28,-9.4,313.52,-8.88,323.24,-5.45,331.79,-0.19,335.76,-1.25,337.55,0.12,339.18,0.02,343.5,-7.44,349.82,-9.04,347.71,-21.03],[323.24,-5.45,331.97,-13.74],[331.79,-0.19,334.56,-7.65],[337.55,0.12,336.66,1.51],[351.09,-19.95,349.82,-9.04,355.78,-17.67],[296.88,10.68,298.01,8.94,299.15,6.48,303.17,-0.74,298.46,1.08,291.71,3.17,286.66,13.91,298.01,8.94,291.71,3.17,286.91,-4.84],[261.91,-56.4,263.38,-60.7,253.02,-59.09,255.21,-56.03,255.43,-53.2,263.47,-49.89,261.88,-55.55],[42.89,27.37,32.17,23.59,29.03,20.94,28.75,19.42],[90.37,44.95,79.66,46.03,77.09,41.27,74.68,33.21,81.99,28.63,90.38,37.21,90.37,44.95,90.43,54.28,79.66,46.03,75.97,43.86,76.08,41.11],[207.13,17.33,208.99,18.27,214.23,19.06,218.24,30.26,218.29,38.19,225.74,40.29,229.14,33.22,221.54,26.96,214.23,19.06,220.6,13.62],[218.29,38.19,214.35,45.97,213.6,51.66,216.53,51.73,214.35,45.97],[67.91,-44.9,70.36,-41.81,70.75,-37.1,76.34,-35.45],[74.86,53.79,76.45,60.48,74.18,66.38,58.3,71.41,57.99,65.6,52.81,60.03],[74.18,66.38,95.44,69.31,105.97,76.94],[134.98,11.75,131.55,18.06,131.2,21.37,132.07,28.67],[131.55,18.06,124.49,9.1],[194.31,38.17,188.76,41.21],[95.97,-17.97,101.58,-16.75,106.03,-23.87,107.37,-26.44,105.69,-27.97,104.92,-29.01,95.33,-30.08],[111.29,-29.36,107.37,-26.44],[101.58,-16.75,104.33,-17.09,106.24,-15.67,103.86,-12.07,104.33,-17.09],[115.18,5.16,112.15,8.23],[304.78,-12.42,305.62,-14.7,307.59,-17.72,311.92,-25.17,313.35,-26.82,322.04,-22.3,327.12,-16.0,325.39,-16.54,320.93,-16.72,316.86,-17.13,304.78,-12.42],[99.64,-43.22,96.13,-52.71,138.37,-69.83,153.59,-70.17,160.98,-64.53,158.24,-61.82,154.49,-61.47,139.45,-59.39,125.76,-59.6,119.36,-53.05,122.59,-47.42,131.36,-54.81,139.45,-59.39],[160.98,-64.53,166.91,-62.57,167.42,-62.09,168.44,-60.46,167.43,-59.12,163.64,-58.99,158.24,-61.82],[29.08,63.8,21.89,60.37,14.58,60.86,10.51,56.68,2.64,59.3],[170.56,-54.64,182.44,-50.87,187.37,-50.38,190.75,-49.1,205.4,-53.6,209.3,-47.42,207.81,-42.6,207.78,-41.82,212.07,-36.5,219.3,-42.27,225.22,-42.21],[207.78,-41.82,200.53,-36.85],[220.41,-60.95,205.4,-53.6,211.43,-60.5],[187.37,-50.38,183.26,-52.52,173.25,-59.59],[307.5,63.08,311.45,61.94,319.8,62.7,326.08,58.9,334.0,57.18,332.94,58.33,337.54,58.55,342.66,66.34,355.12,77.78,322.25,70.68,319.8,62.7],[322.25,70.68,342.66,66.34],[41.17,3.35,39.32,5.71,37.39,8.58,41.59,10.22,45.28,9.01,45.92,4.19,41.17,3.35,40.21,0.44,35.17,-2.86,28.19,-10.2,26.34,-15.81,11.23,-17.84,5.19,-8.68,17.48,-10.04,21.34,-8.05,28.19,-10.2],[124.45,-77.0,158.94,-78.75,161.37,-80.61,184.99,-79.46,180.25,-78.37,158.94,-78.75],[229.9,-58.9,221.17,-65.09,231.38,-59.41],[95.77,-33.45,87.97,-35.76,85.15,-34.06,83.04,-35.45],[87.97,-35.76,89.99,-42.81],[197.82,17.39,198.28,27.74,187.06,28.12],[285.13,-37.07,287.05,-37.02,287.82,-37.86,287.96,-39.3,287.55,-40.45,286.25,-42.05,282.87,-43.4,278.85,-42.29],[233.5,31.27,232.23,29.02,233.95,26.63,235.97,26.21,237.68,25.99,239.67,26.8,240.63,29.78],[182.45,-24.88,182.87,-22.77,184.29,-17.69,187.81,-16.66,188.95,-23.54,182.87,-22.77],[174.51,-9.95,171.49,-11.01,170.17,-14.92,165.27,-18.44,168.24,-22.97,171.17,-18.93,171.55,-17.83,176.53,-18.5,179.34,-17.3],[170.17,-14.92,171.55,-17.83],[192.32,-59.83,184.14,-58.9],[187.02,-63.25,188.16,-57.26],[318.52,30.34,311.82,34.07,305.8,40.34,296.45,45.2,292.59,51.79,289.43,53.42],[310.58,45.38,305.8,40.34,299.33,35.16,292.95,28.02],[308.62,11.4,309.7,14.69,310.22,16.01,311.97,16.22,311.17,15.17,309.7,14.69],[64.18,-51.42,68.64,-54.99,83.46,-62.47,86.21,-65.73,88.57,-63.09,83.46,-62.47,76.49,-57.44,68.64,-54.99],[268.5,56.87,269.31,51.49,262.76,52.28,263.2,55.16,268.5,56.87,288.14,67.71,275.09,71.35,257.22,65.68,246.09,61.45,240.6,58.49,231.38,58.87,211.28,64.25,188.65,69.64,173.24,69.18],[275.09,71.35,275.13,72.75],[288.14,67.71,297.02,70.33],[319.29,5.36,318.94,10.12,317.91,10.24],[77.29,-5.05,71.71,-3.21,69.41,-3.3,63.29,-6.77,59.82,-13.43,56.85,-12.02,56.13,-9.68,53.55,-9.37,44.43,-8.79,41.35,-13.75,41.58,-18.46,45.89,-23.52,50.17,-21.66,53.74,-21.55,57.0,-23.17,69.15,-30.51,66.26,-33.96,64.72,-33.74,57.61,-36.12,54.51,-40.19,50.22,-42.98,44.82,-40.2,40.43,-39.74,36.99,-47.59,34.36,-51.39,29.24,-51.48,24.67,-57.1],[48.3,-28.89,42.55,-32.3,31.42,-29.17],[94.12,22.5,96.14,22.5,101.39,25.1,108.21,30.2,114.07,31.83,116.74,27.96,114.39,26.84,110.43,21.93,106.42,20.53,99.81,16.37,101.69,12.87],[110.43,21.93,109.9,16.49],[345.61,-52.61,342.53,-51.18,341.06,-46.75,337.83,-43.61,332.47,-46.83,341.06,-46.75],[337.71,-43.36,334.3,-41.21,331.93,-39.41,328.88,-37.24],[245.77,19.09,247.84,21.43,250.58,31.55,250.95,38.87,248.74,42.38,245.13,46.25,242.4,44.87,238.39,42.37],[250.58,31.55,255.33,30.89],[250.95,38.87,258.99,36.78],[269.29,37.25,261.15,37.12,258.99,36.78,255.33,30.89,259.03,24.81,266.88,27.71,269.7,29.25,272.14,28.77],[258.96,14.36,247.84,21.43],[63.72,-42.23,40.86,-50.69,39.57,-52.43,40.37,-54.44,46.06,-59.64,44.83,-63.97],[132.05,6.32,132.46,5.74,131.15,3.3,130.04,3.25,129.76,5.61,132.05,6.32,134.2,5.84,138.93,2.2,145.3,-1.26,142.22,-8.77,148.19,-14.97,152.97,-12.49,156.84,-16.97,162.73,-16.33,173.58,-32.0,178.56,-34.06,200.09,-23.31,211.97,-26.81,222.96,-28.07],[6.7,-77.11,56.71,-74.16,40.0,-68.15,35.56,-68.54,28.9,-67.52,29.9,-61.44],[309.85,-47.2,311.49,-51.82,314.21,-58.35,329.93,-54.87,320.43,-53.34,309.85,-47.2],[336.15,52.36,338.1,50.42,337.66,47.84,335.53,46.67,337.91,43.26,340.42,44.42,337.66,47.84,336.4,49.61,336.15,52.36],[337.91,43.26,333.75,39.85,334.28,37.88],[152.45,11.84,152.19,16.63,155.35,19.71,168.88,20.38,177.61,14.42,168.91,15.28,152.45,11.84],[155.35,19.71,154.54,23.28,148.57,25.88,146.84,23.65],[152.25,35.11,156.86,33.66,163.7,34.07,157.35,36.57,152.25,35.11,143.96,36.28],[91.84,-14.94,89.4,-14.17,87.04,-14.81,83.48,-17.81,78.53,-16.18,76.65,-22.34,82.35,-20.74,86.39,-22.44,88.11,-20.87],[78.61,-12.91,78.53,-16.18,80.2,-13.15],[226.41,-25.38,223.09,-16.15,229.61,-9.48,234.25,-14.88,234.66,-28.22,235.07,-29.86],[223.09,-16.15,234.25,-14.88],[238.16,-33.71,235.36,-34.5,230.87,-36.35,230.78,-40.74,225.07,-43.24,220.93,-47.5,228.55,-52.2,230.1,-47.97,231.12,-44.78,234.23,-41.25,240.47,-38.47,242.09,-36.87],[230.78,-40.74,234.23,-41.25],[95.49,59.0,104.89,58.39,112.18,49.16,126.16,43.1,135.59,41.68,140.12,36.69,140.67,34.28],[281.42,37.63,281.31,39.64,279.46,38.81,281.42,37.63,283.86,36.93,284.98,32.73,282.76,33.39,281.42,37.63],[92.36,-74.76,82.71,-76.32,73.61,-74.9,75.6,-71.28],[312.9,-33.68,312.57,-43.89,320.61,-40.7,319.88,-32.06,315.73,-32.15,312.9,-33.68],[115.63,-9.61,122.48,-3.06,108.3,-0.54,97.53,-7.05,94.04,-6.28],[108.3,-0.54,102.31,2.38,96.29,4.58,98.58,7.31,100.61,9.87],[176.72,-66.88,184.76,-68.11,189.7,-69.28,191.98,-68.25,196.03,-71.69,188.52,-72.28,189.7,-69.28],[242.09,-45.24,247.28,-47.61,245.46,-50.22,241.29,-49.3,242.09,-45.24],[217.88,-83.79,342.16,-81.24,326.08,-77.27,217.88,-83.79],[270.12,-9.77,267.31,2.7,266.2,4.56,264.04,12.54,254.73,9.34,248.06,1.93,243.93,-3.76,244.93,-4.76,249.66,-10.62,257.97,-15.76],[254.73,9.34,249.66,-10.62,248.17,-16.67,247.14,-18.51,246.41,-20.1,246.79,-23.51],[266.2,4.56,257.97,-15.76,260.91,-25.02,262.26,-29.89],[92.27,14.76,88.99,20.28,91.37,20.14,93.36,14.2,90.96,9.65,89.15,7.41,81.64,6.37,74.09,10.19],[74.98,1.75,73.91,2.48,73.15,5.65,72.82,7.01,73.01,8.94,74.09,10.19,74.47,13.55,76.52,15.44,77.8,15.63],[78.95,-8.17,81.45,-2.37,83.34,-0.28,81.64,6.37,84.15,9.95,89.15,7.41,85.52,-1.93,87.25,-9.66],[85.52,-1.93,84.39,-1.19,83.34,-0.28],[306.93,-56.65,311.83,-66.11,302.8,-66.1,283.67,-62.15,276.42,-61.48,272.78,-63.66,267.08,-64.73,281.53,-71.4,300.9,-72.84,311.83,-66.11,322.15,-65.25],[332.79,33.31,341.06,30.36,346.26,28.23,2.44,29.24,3.65,15.33,346.52,15.35,342.0,12.31,340.7,10.97,332.88,6.33,326.37,10.0],[346.52,15.35,346.26,28.23,342.82,24.74,341.95,23.71,332.06,25.48,326.46,25.77],[56.5,32.37,58.95,31.96,60.17,35.86,59.91,40.08,56.75,42.66,56.21,47.87,54.6,48.28,51.56,49.95,46.68,53.61,43.16,56.0,44.04,52.87,47.73,49.71,47.82,44.96,47.48,41.06,48.25,39.71,46.72,38.94,45.12,39.77,45.35,41.14,47.48,41.06],[62.14,50.42,64.21,48.47,62.65,47.78,56.21,47.87],[47.73,49.71,41.5,49.34,26.33,50.82],[6.89,-42.16,16.82,-46.58,22.38,-43.18,23.09,-48.94,17.37,-55.1,16.82,-46.58,2.69,-45.6,6.89,-42.16],[102.12,-61.97,87.58,-56.16,86.98,-51.06],[18.8,24.72,18.28,30.23,20.23,27.4,18.8,24.72,18.22,21.17,23.23,15.48,26.7,9.29,30.86,2.89,28.73,3.32,25.7,5.62,22.89,6.28,18.78,7.72,16.08,8.03,12.51,7.73,0.17,7.01,355.33,5.77,352.33,6.53,350.42,5.53,349.63,3.43,352.07,1.4,355.85,1.93,356.94,3.63,355.33,5.77],[349.63,3.43,346.31,3.96],[340.53,-26.9,344.77,-29.48,344.35,-32.4,343.5,-32.73,338.25,-32.21,332.48,-32.86,326.63,-32.9,327.32,-30.77,332.48,-32.86,340.53,-26.9],[99.64,-43.22,109.52,-37.15,114.11,-28.43,114.98,-26.87,117.6,-24.93,119.5,-22.95,122.17,-24.38,121.13,-40.08,122.59,-47.42],[117.6,-24.93,117.3,-26.0,116.22,-29.02,114.11,-28.43],[121.13,-40.08,130.29,-35.4,131.16,-33.28,132.92,-27.81],[63.69,-62.41,64.24,-59.24,59.79,-61.33,56.13,-64.72,63.69,-62.41],[295.32,18.08,297.14,18.6,299.98,19.57],[295.56,17.54,297.14,18.6],[274.86,-36.75,276.48,-34.37,275.67,-29.81,277.4,-25.4,273.84,-21.05],[291.13,-44.41,291.43,-40.56,286.07,-29.84,281.83,-26.96,277.4,-25.4],[299.27,-41.8,300.36,-35.2,299.36,-26.23,294.58,-24.82,291.72,-24.45,289.29,-25.21,284.23,-26.26,281.83,-26.96,275.67,-29.81,271.88,-30.42,276.48,-34.37,286.07,-29.84,287.15,-27.63,284.23,-26.26,286.57,-21.7,287.83,-20.98,289.8,-18.9,290.8,-17.8,290.81,-15.9],[286.57,-21.7,284.83,-21.07,283.94,-22.71,284.23,-26.26],[240.12,-26.19,240.48,-22.69,241.75,-19.88],[240.48,-22.69,245.7,-25.65,247.76,-26.49,249.38,-28.27,252.98,-34.34,253.42,-38.09,254.11,-42.4,258.51,-43.27,264.81,-43.01,267.36,-40.13,266.08,-39.04,263.85,-37.12],[14.97,-29.21,357.57,-27.98,350.06,-32.39,353.6,-37.67],[279.16,-8.22,282.15,-4.72,280.93,-9.02,277.68,-14.55,279.16,-8.22],[236.85,15.34,235.68,19.59,237.48,18.06,239.42,15.59,236.85,15.34,234.02,10.45,236.39,6.34,238.03,4.4,243.93,-3.76],[257.97,-15.76,264.78,-15.41,270.12,-9.77,271.13,-8.18,275.67,-2.88,284.38,4.24],[152.32,-0.5,148.46,-8.23,157.71,-2.88,157.91,-0.77],[84.81,21.16,69.36,16.56,67.54,15.93,65.33,15.69,66.12,17.6,67.54,19.24,81.99,28.63],[65.33,15.69,60.54,12.56,52.15,9.82,61.14,6.06],[52.15,9.82,51.56,9.12,54.56,0.49],[273.3,-45.95,277.23,-45.95,277.72,-49.05],[28.65,29.71,32.78,35.11,34.72,33.97,28.65,29.71],[252.87,-69.07,239.38,-63.51,230.36,-68.77,252.87,-69.07],[335.07,-60.13,349.74,-58.09,8.19,-62.81,5.33,-64.73,0.32,-65.43,337.3,-64.83,335.07,-60.13],[184.18,56.89,166.34,61.61,165.85,56.24,178.8,53.55,184.18,56.89,193.8,55.82,201.25,54.79,207.15,49.18],[178.8,53.55,176.86,47.63,169.98,32.95,169.9,31.39],[176.86,47.63,167.79,44.35,155.98,41.36],[167.79,44.35,154.67,42.78],[166.34,61.61,143.4,62.94,128.11,60.63,148.22,58.91,165.85,56.24],[165.85,56.24,148.47,53.94,143.66,51.56,135.26,47.94],[136.36,47.05,143.66,51.56],[235.79,77.71,244.19,75.69,230.18,71.74,222.66,74.05,235.79,77.71,250.84,81.99,260.95,86.57,46.65,89.37],[131.36,-54.81,140.73,-55.12,149.45,-54.69,161.98,-49.56,153.96,-42.25,142.94,-40.58,137.24,-43.54,122.59,-47.42],[176.81,6.38,178.01,1.62,185.32,-0.81,190.76,-1.59,197.83,-5.68,201.65,-11.3,214.35,-6.12,221.11,-5.77],[195.88,10.82,194.24,3.25,190.76,-1.59],[197.83,-5.68,204.01,-0.73,210.75,1.42,221.9,1.78],[135.71,-66.5,126.5,-66.22,122.0,-68.7,109.2,-68.01,107.13,-70.54,122.0,-68.7,135.71,-66.5],[289.34,21.44,292.45,24.72,298.65,24.15,300.55,27.83,304.22,27.9]];
+const CONSTS = {"And":["Andromeda","Andromède",1.1,43.1],"Ant":["Antlia","Machine Pneumatique",156.3,-36.1],"Aps":["Apus","Oiseau de Paradis",240.8,-74.1],"Aqr":["Aquarius","Verseau",337.8,-4.9],"Aql":["Aquila","Aigle",291.3,8.1],"Ara":["Ara","Autel",258.6,-56.0],"Ari":["Aries","Bélier",42.4,22.1],"Aur":["Auriga","Cocher",82.9,37.0],"Boo":["Bootes","Bouvier",223.8,34.9],"Cae":["Caelum","Burin",73.7,-42.0],"Cam":["Camelopardalis","Girafe",84.8,72.0],"Cnc":["Cancer","Cancer",128.6,26.9],"CVn":["Canes Venatici","Chiens de Chasse",192.3,42.9],"CMa":["Canis Maior","Grand Chien",97.8,-26.0],"CMi":["Canis Minor","Petit Chien",109.9,5.0],"Cap":["Capricornus","Capricorne",315.4,-21.9],"Car":["Carina","Carène",144.1,-66.1],"Cas":["Cassiopeia","Cassiopée",354.3,55.6],"Cen":["Centaurus","Centaure",199.9,-40.1],"Cep":["Cepheus","Céphée",337.7,71.1],"Cet":["Cetus","Baleine",28.8,-4.9],"Cha":["Chamaeleon","Caméléon",189.5,-81.1],"Cir":["Circinus","Compas",218.1,-67.1],"Col":["Columba","Colombe",85.7,-39.0],"Com":["Coma Berenices","Chevelure de Bérénice",193.8,23.9],"CrA":["Corona Australis","Couronne Australe",282.5,-40.0],"CrB":["Corona Borealis","Couronne Boréale",238.8,31.9],"Crv":["Corvus","Corbeau",186.3,-19.6],"Crt":["Crater","Coupe",175.1,-15.1],"Cru":["Crux","Croix du Sud",193.9,-62.1],"Cyg":["Cygnus","Cygne",307.7,50.1],"Del":["Delphinus","Dauphin",309.3,6.1],"Dor":["Dorado","Dorade",76.5,-64.0],"Dra":["Draco","Dragon",268.5,64.0],"Equ":["Equuleus","Petit Cheval",320.6,11.6],"Eri":["Eridanus","Eridan",52.8,-17.9],"For":["Fornax","Fourneau",40.8,-27.9],"Gem":["Gemini","Gémeaux",107.7,23.5],"Gru":["Grus","Grue",342.4,-41.4],"Her":["Hercules","Hercule",253.7,35.0],"Hor":["Horologium","Horloge",51.2,-51.9],"Hya":["Hydra","Hydre Femelle",150.3,-22.1],"Hyi":["Hydrus","Hydre Mâle",34.6,-71.9],"Ind":["Indus","Indien",318.5,-55.4],"Lac":["Lacerta","Lézard",342.3,47.1],"Leo":["Leo","Lion",159.4,14.9],"LMi":["Leo Minor","Petit Lion",157.9,29.9],"Lep":["Lepus","Lièvre",88.8,-25.0],"Lib":["Libra","Balance",231.4,-26.1],"Lup":["Lupus","Loup",229.2,-35.1],"Lyn":["Lynx","Lynx",122.0,48.9],"Lyr":["Lyra","Lyre",279.3,30.0],"Men":["Mensa","Table",82.0,-80.0],"Mic":["Microscopium","Microscope",316.9,-36.9],"Mon":["Monoceros","Licorne",115.1,-6.1],"Mus":["Musca","Mouche",195.5,-73.1],"Nor":["Norma","Règle",243.5,-52.1],"Oct":["Octans","Octant",301.1,-79.9],"Oph":["Ophiuchus","Ophiuchus",258.3,3.0],"Ori":["Orion","Orion",84.4,13.0],"Pav":["Pavo","Paon",297.6,-61.9],"Peg":["Pegasus","Pégase",334.8,16.1],"Per":["Perseus","Persée",66.5,45.1],"Phe":["Phoenix","Phénix",16.8,-42.9],"Pic":["Pictor","Peintre",82.7,-50.0],"Psc":["Pisces","Poissons",19.9,15.1],"PsA":["Piscis Austrinus","Poisson Austral",333.4,-28.9],"Pup":["Puppis","Poupe",111.2,-46.1],"Pyx":["Pyxis","Boussole",132.3,-24.1],"Ret":["Reticulum","Réticule",55.6,-60.9],"Sge":["Sagitta","Flèche",291.3,18.1],"Sgr":["Sagittarius","Sagittaire",292.9,-33.9],"Sco":["Scorpius","Scorpion",249.4,-38.1],"Scl":["Sculptor","Sculpteur",1.8,-32.9],"Sct":["Scutum","Écu de Sobieski",282.4,-12.5],"Ser":["Serpens","Serpent",232.8,4.9],"Sex":["Sextans","Sextant",157.8,-7.1],"Tau":["Taurus","Taureau",54.4,15.1],"Tel":["Telescopium","Télescope",278.0,-54.0],"Tri":["Triangulum","Triangle",27.4,34.1],"TrA":["Triangulum Australe","Triangle Austral",240.6,-67.6],"Tuc":["Tucana","Toucan",348.4,-63.9],"UMa":["Ursa Maior","Grande Ourse",165.4,47.9],"UMi":["Ursa Minor","Petite Ourse",226.6,67.9],"Vel":["Vela","Voiles",143.5,-46.1],"Vir":["Virgo","Vierge",199.8,-4.1],"Vol":["Volans","Poisson Volant",110.9,-73.1],"Vul":["Vulpecula","Petit Renard",295.8,21.1]};
+
+/* ================= MATHS ================= */
+const D2R = Math.PI/180, R2D = 180/Math.PI, TAU = Math.PI*2;
+const AMB = '#ffc46b';
+const clamp = (v,a,b)=>v<a?a:v>b?b:v;
+const wrap180 = a=>{a=((a+180)%360+360)%360-180;return a;};
+const dot=(a,b)=>a[0]*b[0]+a[1]*b[1]+a[2]*b[2];
+const cross=(a,b)=>[a[1]*b[2]-a[2]*b[1], a[2]*b[0]-a[0]*b[2], a[0]*b[1]-a[1]*b[0]];
+const sub3=(a,b)=>[a[0]-b[0],a[1]-b[1],a[2]-b[2]];
+const scale3=(a,k)=>[a[0]*k,a[1]*k,a[2]*k];
+const norm3=a=>{const l=Math.hypot(a[0],a[1],a[2])||1;return [a[0]/l,a[1]/l,a[2]/l];};
+const lerp3=(a,b,t)=>[a[0]+(b[0]-a[0])*t, a[1]+(b[1]-a[1])*t, a[2]+(b[2]-a[2])*t];
+const jdNow = ()=>Date.now()/86400000 + 2440587.5;
+function gmstDeg(jd){ let g=(280.46061837 + 360.98564736629*(jd-2451545.0))%360; return g<0?g+360:g; }
+
+const GREEK = {'α':'alpha','β':'beta','γ':'gamma','δ':'delta','ε':'epsilon','ζ':'zeta','η':'eta','θ':'theta','ι':'iota','κ':'kappa','λ':'lambda','μ':'mu','ν':'nu','ξ':'xi','ο':'omicron','π':'pi','ρ':'rho','σ':'sigma','τ':'tau','υ':'upsilon','φ':'phi','χ':'chi','ψ':'psi','ω':'omega'};
+const normS = s=>s.normalize('NFD').replace(/[\u0300-\u036f]/g,'').toLowerCase();
+const greekWords = s=>s.replace(/[αβγδεζηθικλμνξοπρστυφχψω]/g, c=>GREEK[c]);
+const esc = s=>s.replace(/[&<>"]/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const fmt = (n,d)=>n.toFixed(d).replace('.',',');
+const PTS = ['N','NNE','NE','ENE','E','ESE','SE','SSE','S','SSO','SO','OSO','O','ONO','NO','NNO'];
+const compassPt = az=>PTS[Math.round((((az%360)+360)%360)/22.5)%16];
+
+const BVS = [[-0.4,155,176,255],[0,202,215,255],[0.4,248,247,255],[0.8,255,244,234],[1.2,255,210,161],[1.6,255,204,111],[2,255,170,90]];
+function bvColor(bv){
+  if(bv==null||isNaN(bv)) bv=0.55;
+  bv=clamp(bv,-0.4,2);
+  for(let i=1;i<BVS.length;i++){
+    if(bv<=BVS[i][0]){
+      const a=BVS[i-1], b=BVS[i], t=(bv-a[0])/(b[0]-a[0]);
+      return 'rgb('+Math.round(a[1]+(b[1]-a[1])*t)+','+Math.round(a[2]+(b[2]-a[2])*t)+','+Math.round(a[3]+(b[3]-a[3])*t)+')';
+    }
+  }
+  return 'rgb(255,170,90)';
+}
+
+/* ================= CATALOGUE ================= */
+const stars = STARS.map(a=>{
+  const [name,sec,con,ra,de,mag,bv,sp,ly]=a;
+  const A=ra*D2R, D=de*D2R, cd=Math.cos(D);
+  const cn=CONSTS[con]||['','',0,0];
+  return {name,sec,con,mag,bv,sp,ly,ra,de,
+    x:cd*Math.cos(A), y:cd*Math.sin(A), z:Math.sin(D),
+    col:bvColor(bv), rad:Math.max(1,(5.6-mag)*0.95), la:cn[0], fr:cn[1],
+    key:normS([name,sec,greekWords(sec||''),cn[0],cn[1],con].join(' '))};
+});
+const byName = {}; for(const s of stars) if(s.name && !byName[s.name]) byName[s.name]=s;
+const lineVecs = LINES.map(fl=>{
+  const out=[];
+  for(let i=0;i<fl.length;i+=2){
+    const A=fl[i]*D2R, D=fl[i+1]*D2R, cd=Math.cos(D);
+    out.push([cd*Math.cos(A), cd*Math.sin(A), Math.sin(D)]);
+  }
+  return out;
+});
+const constLabels = Object.keys(CONSTS).map(k=>{
+  const c=CONSTS[k], A=c[2]*D2R, D=c[3]*D2R, cd=Math.cos(D);
+  return {fr:c[1]||c[0], v:[cd*Math.cos(A), cd*Math.sin(A), Math.sin(D)]};
+});
+const POPULAR = ['Polaris','Sirius','Vega','Arcturus','Capella','Rigel','Betelgeuse','Altair','Deneb','Antares','Aldebaran','Procyon','Pollux','Spica','Fomalhaut','Regulus','Castor','Mizar'];
+
+/* ================= ÉTAT ================= */
+const S = {
+  lat:46.8, lon:2.4, geoOk:false,
+  fov:62, azOff:0, magLim:5,
+  tCam:true, lines:true, cn:true, sn:true, night:false, man:false,
+  maz:180, malt:30,
+  rel:false, target:null, lastDist:0
+};
+let smF=null, smR=null, lastOri=0, isIOS=false, camOn=false, wakeLock=null;
+let W=0, H=0, lastUi=0;
+const visList=[]; let curResults=[];
+
+/* ================= DOM ================= */
+const $ = id=>document.getElementById(id);
+const camEl=$('cam'), sky=$('sky'), ctx=sky.getContext('2d');
+const q=$('q'), qclear=$('qclear'), results=$('results'), statusEl=$('status');
+const card=$('card'), cName=$('cName'), cSub=$('cSub'), cStats=$('cStats'), cDyn=$('cDyn'), cCal=$('cCal');
+const sheet=$('sheet'), toastEl=$('toast');
+let toastT=0;
+function toast(msg){
+  toastEl.textContent=msg; toastEl.classList.remove('hidden'); toastEl.style.opacity=1;
+  clearTimeout(toastT);
+  toastT=setTimeout(()=>{ toastEl.style.opacity=0; setTimeout(()=>toastEl.classList.add('hidden'),320); }, 2800);
+}
+function resize(){
+  const dpr=Math.min(window.devicePixelRatio||1,2);
+  W=window.innerWidth; H=window.innerHeight;
+  sky.width=Math.round(W*dpr); sky.height=Math.round(H*dpr);
+  sky.style.width=W+'px'; sky.style.height=H+'px';
+  ctx.setTransform(dpr,0,0,dpr,0,0);
+}
+window.addEventListener('resize',resize); resize();
+
+/* ================= CAPTEURS ================= */
+function onOri(e){
+  let a=e.alpha, b=e.beta, g=e.gamma;
+  if(e.webkitCompassHeading!=null){ a=360-e.webkitCompassHeading; S.rel=false; }
+  else if(a==null||b==null||g==null) return;
+  else S.rel = (e.absolute===false && !isIOS);
+  const ar=a*D2R, br=b*D2R, gr=g*D2R;
+  const ca=Math.cos(ar), sa=Math.sin(ar), cb=Math.cos(br), sb=Math.sin(br), cg=Math.cos(gr), sg=Math.sin(gr);
+  // R = Rz(a)·Rx(b)·Ry(g) : colonnes = axes appareil dans le repère terrestre (E,N,U)
+  const c0=[ca*cg - sa*sb*sg,  sa*cg + ca*sb*sg,  -cb*sg];   // x appareil (droite)
+  const c1=[-sa*cb,            ca*cb,             sb    ];   // y appareil (haut)
+  const c2=[ca*sg + sa*sb*cg,  sa*sg - ca*sb*cg,  cb*cg ];   // z appareil (hors écran)
+  const sc=((screen.orientation&&screen.orientation.angle!=null)?screen.orientation.angle:(window.orientation||0))*D2R;
+  const cs=Math.cos(sc), ss=Math.sin(sc);
+  const r0=[cs*c0[0]-ss*c1[0], cs*c0[1]-ss*c1[1], cs*c0[2]-ss*c1[2]];
+  const f0=[-c2[0],-c2[1],-c2[2]];
+  const K=0.16;
+  if(!smF || dot(smF,f0)<0.2){ smF=f0; smR=r0; }
+  else { smF=norm3(lerp3(smF,f0,K)); smR=norm3(lerp3(smR,r0,K)); }
+  lastOri=performance.now();
+}
+const manualActive = ()=> S.man || (performance.now()-lastOri>2500);
+function activeBasis(){
+  let f,r;
+  if(manualActive()){
+    const az=S.maz*D2R, al=S.malt*D2R;
+    const caz=Math.cos(az), saz=Math.sin(az), cal=Math.cos(al), sal=Math.sin(al);
+    f=[saz*cal, caz*cal, sal]; r=[caz,-saz,0];
+  } else {
+    const o=S.azOff*D2R, co=Math.cos(o), so=Math.sin(o);
+    const rz=v=>[v[0]*co+v[1]*so, -v[0]*so+v[1]*co, v[2]];
+    f=rz(smF); r=rz(smR);
+  }
+  r=norm3(sub3(r, scale3(f, dot(r,f))));
+  return {f, r, u:cross(r,f)};
+}
+async function initSensors(){
+  try{
+    if(typeof DeviceOrientationEvent!=='undefined' && typeof DeviceOrientationEvent.requestPermission==='function'){
+      isIOS=true;
+      const p=await DeviceOrientationEvent.requestPermission();
+      if(p!=='granted') throw 0;
+      window.addEventListener('deviceorientation', onOri, true);
+    } else if('ondeviceorientationabsolute' in window){
+      window.addEventListener('deviceorientationabsolute', onOri, true);
+    } else if(typeof DeviceOrientationEvent!=='undefined'){
+      window.addEventListener('deviceorientation', onOri, true);
+    }
+  }catch(e){ toast('Capteurs d\u2019orientation indisponibles \u2014 vis\u00e9e manuelle (glisser)'); }
+}
+
+/* ================= CAMÉRA / GPS ================= */
+async function initCamera(){
+  if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){ camOn=false; return; }
+  try{
+    const st=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1280}},audio:false});
+    camEl.srcObject=st; camOn=true;
+    camEl.style.display = S.tCam?'block':'none';
+    await camEl.play().catch(()=>{});
+  }catch(e){ camOn=false; camEl.style.display='none'; toast('Cam\u00e9ra indisponible \u2014 mode carte du ciel'); }
+}
+function initGeo(){
+  if(!navigator.geolocation) return;
+  navigator.geolocation.getCurrentPosition(p=>{
+    S.lat=p.coords.latitude; S.lon=p.coords.longitude; S.geoOk=true;
+    $('latI').value=S.lat.toFixed(4); $('lonI').value=S.lon.toFixed(4);
+  }, ()=>{ toast('Position refus\u00e9e \u2014 r\u00e9glez-la dans les param\u00e8tres'); },
+  {enableHighAccuracy:false, timeout:9000, maximumAge:600000});
+}
+
+/* ================= ASTRO ================= */
+function lstNow(){ return ((gmstDeg(jdNow())+S.lon)%360+360)%360; }
+function altAzOf(s,lst){
+  const lr=lst*D2R, ct=Math.cos(lr), st=Math.sin(lr);
+  const fr=S.lat*D2R, sf=Math.sin(fr), cf=Math.cos(fr);
+  const xH=ct*s.x+st*s.y, yH=st*s.x-ct*s.y;
+  const E=-yH, N=cf*s.z-sf*xH, U=sf*s.z+cf*xH;
+  return [Math.asin(clamp(U,-1,1))*R2D, ((Math.atan2(E,N)*R2D)%360+360)%360];
+}
+function riseText(s,lst){
+  const fr=S.lat*D2R, de=s.de*D2R;
+  const cosH0=-Math.tan(fr)*Math.tan(de);
+  if(cosH0>1) return 'Ne se l\u00e8ve jamais \u00e0 cette latitude';
+  if(cosH0<-1) return 'Circumpolaire';
+  const H0=Math.acos(cosH0)*R2D;
+  const Hc=wrap180(lst-s.ra);
+  const dh=(((-H0-Hc)%360)+360)%360/15.04107;
+  const h=Math.floor(dh), m=Math.round((dh-h)*60);
+  const azR=Math.acos(clamp(Math.sin(de)/Math.cos(fr),-1,1))*R2D;
+  return 'Sous l\u2019horizon \u2014 lever dans '+h+' h '+String(m).padStart(2,'0')+', az \u2248 '+Math.round(azR)+'\u00b0 ('+compassPt(azR)+')';
+}
+
+/* ================= BOUCLE DE RENDU ================= */
+const frameLabels=[];
+function draw(){
+  requestAnimationFrame(draw);
+  const w=W, h=H;
+  ctx.clearRect(0,0,w,h);
+  if(!(S.tCam&&camOn)){
+    const gr=ctx.createRadialGradient(w/2,-h*0.25,10,w/2,h*0.4,h*1.15);
+    gr.addColorStop(0,'#0a1124'); gr.addColorStop(.55,'#050811'); gr.addColorStop(1,'#02030a');
+    ctx.fillStyle=gr; ctx.fillRect(0,0,w,h);
+  }
+  const lst=lstNow(), lr=lst*D2R, ct=Math.cos(lr), st=Math.sin(lr);
+  const fr=S.lat*D2R, sf=Math.sin(fr), cf=Math.cos(fr);
+  const B=activeBasis(), f=B.f, r=B.r, u=B.u;
+  const fpx=(h/2)/Math.tan(S.fov*D2R/2), cx=w/2, cy=h/2;
+  const toENU=(x,y,z)=>{ const xH=ct*x+st*y, yH=st*x-ct*y; return [-yH, cf*z-sf*xH, sf*z+cf*xH]; };
+  const proj=d=>{
+    const dz=d[0]*f[0]+d[1]*f[1]+d[2]*f[2];
+    if(dz<0.035) return null;
+    const sx=d[0]*r[0]+d[1]*r[1]+d[2]*r[2], sy=d[0]*u[0]+d[1]*u[1]+d[2]*u[2];
+    return [cx+sx/dz*fpx, cy-sy/dz*fpx];
+  };
+  // horizon + cardinaux
+  ctx.strokeStyle='rgba(160,185,235,.3)'; ctx.lineWidth=1; ctx.beginPath();
+  let pv=null;
+  for(let a=0;a<=360;a+=4){
+    const A=a*D2R, p=proj([Math.sin(A),Math.cos(A),0]);
+    if(p&&pv){ ctx.moveTo(pv[0],pv[1]); ctx.lineTo(p[0],p[1]); }
+    pv=p;
+  }
+  for(let a=0;a<360;a+=15){
+    const A=a*D2R, cA=Math.cos(1.4*D2R), sA=Math.sin(1.4*D2R);
+    const p1=proj([Math.sin(A),Math.cos(A),0]), p2=proj([Math.sin(A)*cA,Math.cos(A)*cA,sA]);
+    if(p1&&p2){ ctx.moveTo(p1[0],p1[1]); ctx.lineTo(p2[0],p2[1]); }
+  }
+  ctx.stroke();
+  ctx.fillStyle='rgba(190,205,240,.6)'; ctx.font='600 12px system-ui'; ctx.textAlign='center';
+  for(const [a,t] of [[0,'N'],[90,'E'],[180,'S'],[270,'O']]){
+    const A=a*D2R, cA=Math.cos(3.2*D2R), sA=Math.sin(3.2*D2R);
+    const p=proj([Math.sin(A)*cA,Math.cos(A)*cA,sA]);
+    if(p) ctx.fillText(t,p[0],p[1]);
+  }
+  // lignes de constellations
+  if(S.lines){
+    ctx.strokeStyle='rgba(125,155,225,.3)'; ctx.lineWidth=1; ctx.beginPath();
+    for(const pl of lineVecs){
+      let q0=null;
+      for(const v of pl){
+        const p=proj(toENU(v[0],v[1],v[2]));
+        if(p&&q0){ ctx.moveTo(q0[0],q0[1]); ctx.lineTo(p[0],p[1]); }
+        q0=p;
+      }
+    }
+    ctx.stroke();
+  }
+  if(S.cn){
+    ctx.fillStyle='rgba(150,172,225,.5)'; ctx.font='10.5px system-ui'; ctx.textAlign='center';
+    for(const c of constLabels){
+      const p=proj(toENU(c.v[0],c.v[1],c.v[2]));
+      if(p&&p[0]>-40&&p[0]<w+40&&p[1]>-10&&p[1]<h+10) ctx.fillText(c.fr,p[0],p[1]);
+    }
+  }
+  // étoiles
+  visList.length=0; frameLabels.length=0;
+  for(const s of stars){
+    if(s.mag>S.magLim) continue;
+    const p=proj(toENU(s.x,s.y,s.z));
+    if(!p) continue;
+    const x=p[0], y=p[1];
+    if(x<-30||x>w+30||y<-30||y>h+30) continue;
+    if(s.mag<0.6){
+      ctx.globalAlpha=.16; ctx.fillStyle=s.col;
+      ctx.beginPath(); ctx.arc(x,y,s.rad*2.6,0,TAU); ctx.fill();
+      ctx.globalAlpha=1;
+    }
+    ctx.fillStyle=s.col; ctx.beginPath(); ctx.arc(x,y,s.rad,0,TAU); ctx.fill();
+    visList.push([s,x,y]);
+    if(S.sn && s.mag<=1.7 && s.name) frameLabels.push([s.name,x,y]);
+  }
+  ctx.fillStyle='rgba(233,238,251,.78)'; ctx.font='11px system-ui'; ctx.textAlign='left';
+  for(const L of frameLabels) ctx.fillText(L[0],L[1]+8,L[2]-7);
+  // cible
+  if(S.target){
+    const s=S.target, d=toENU(s.x,s.y,s.z);
+    const dist=Math.acos(clamp(dot(d,f),-1,1))*R2D; S.lastDist=dist;
+    const p=proj(d);
+    ctx.strokeStyle=AMB; ctx.fillStyle=AMB;
+    if(p && p[0]>-20&&p[0]<w+20&&p[1]>-20&&p[1]<h+20){
+      if(dist>2.5){
+        ctx.globalAlpha=.3; ctx.lineWidth=1; ctx.beginPath();
+        ctx.moveTo(cx,cy); ctx.lineTo(p[0],p[1]); ctx.stroke(); ctx.globalAlpha=1;
+      }
+      const R0=19+2.5*Math.sin(performance.now()/260);
+      ctx.lineWidth=2; ctx.beginPath(); ctx.arc(p[0],p[1],R0,0,TAU); ctx.stroke();
+      ctx.lineWidth=1.5; ctx.beginPath();
+      for(let k=0;k<4;k++){
+        const A=k*Math.PI/2;
+        ctx.moveTo(p[0]+Math.cos(A)*(R0+3), p[1]+Math.sin(A)*(R0+3));
+        ctx.lineTo(p[0]+Math.cos(A)*(R0+9), p[1]+Math.sin(A)*(R0+9));
+      }
+      ctx.stroke();
+      if(dist<1.5){
+        ctx.globalAlpha=.45; ctx.beginPath(); ctx.arc(p[0],p[1],R0+13,0,TAU); ctx.stroke(); ctx.globalAlpha=1;
+      }
+      ctx.font='600 12.5px system-ui'; ctx.textAlign='center';
+      ctx.fillText(s.name, p[0], p[1]-R0-13);
+    } else {
+      const sx=dot(d,r), sy=dot(d,u);
+      let vx=sx, vy=-sy;
+      const L=Math.hypot(vx,vy)||1; vx/=L; vy/=L;
+      const x1=cx+vx*46, y1=cy+vy*46, x2=cx+vx*112, y2=cy+vy*112;
+      ctx.lineWidth=2.5; ctx.beginPath(); ctx.moveTo(x1,y1); ctx.lineTo(x2,y2);
+      ctx.moveTo(x2-vx*14-vy*9, y2-vy*14+vx*9); ctx.lineTo(x2,y2);
+      ctx.lineTo(x2-vx*14+vy*9, y2-vy*14-vx*9); ctx.stroke();
+      ctx.font='600 13px ui-monospace,monospace'; ctx.textAlign='center';
+      ctx.fillText(Math.round(dist)+'\u00b0', cx+vx*138, cy+vy*138+4);
+    }
+  }
+  // croix centrale
+  ctx.strokeStyle = S.target?AMB:'rgba(255,255,255,.4)'; ctx.lineWidth=1.2; ctx.beginPath();
+  ctx.moveTo(cx-10,cy); ctx.lineTo(cx-4,cy); ctx.moveTo(cx+4,cy); ctx.lineTo(cx+10,cy);
+  ctx.moveTo(cx,cy-10); ctx.lineTo(cx,cy-4); ctx.moveTo(cx,cy+4); ctx.lineTo(cx,cy+10);
+  ctx.stroke();
+  const nw=performance.now();
+  if(nw-lastUi>250){ lastUi=nw; updateStatus(); updateCardDyn(lst); }
+}
+
+/* ================= UI DYNAMIQUE ================= */
+function updateStatus(){
+  let html='';
+  const posTxt = S.geoOk===true ? fmt(S.lat,2)+' ; '+fmt(S.lon,2)
+    : S.geoOk==='manual' ? fmt(S.lat,2)+' ; '+fmt(S.lon,2)+' \u00b7 manuel'
+    : 'position par d\u00e9faut';
+  html+='<span class="chip mono'+(S.geoOk?'':' warn')+'">'+posTxt+'</span>';
+  if(manualActive()) html+='<span class="chip">vis\u00e9e manuelle \u2014 glissez</span>';
+  else if(S.rel) html+='<span class="chip warn">boussole relative \u2014 calez sur une \u00e9toile</span>';
+  html+='<span class="chip mono">'+new Date().toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})+'</span>';
+  statusEl.innerHTML=html;
+  cCal.disabled=manualActive();
+}
+function updateCardDyn(lst){
+  if(!S.target) return;
+  const s=S.target, aa=altAzOf(s,lst);
+  if(aa[0]>0){
+    cDyn.innerHTML='<span class="big">\u0394 '+fmt(S.lastDist, S.lastDist<10?1:0)+'\u00b0</span> \u00b7 Alt '
+      +Math.round(aa[0])+'\u00b0 \u00b7 Az '+Math.round(aa[1])+'\u00b0 ('+compassPt(aa[1])+')';
+  } else {
+    cDyn.textContent=riseText(s,lst);
+  }
+}
+
+/* ================= RECHERCHE ================= */
+function subTitle(s){ return (s.sec?s.sec+' \u00b7 ':'')+(s.fr||s.la||s.con); }
+function renderResults(){
+  const qv=q.value.trim();
+  qclear.classList.toggle('hidden',!qv);
+  let list, head;
+  if(!qv){
+    list=POPULAR.map(n=>byName[n]).filter(Boolean);
+    head='Populaires';
+  } else {
+    let qn=normS(qv).replace(/['\u2019]/g,' ').replace(/\s+/g,' ').trim();
+    const AL={'polaire':'polaris','la polaire':'polaris','etoile polaire':'polaris','l etoile polaire':'polaris','epi':'spica','l epi':'spica'};
+    if(AL[qn]) qn=AL[qn];
+    list=stars.filter(s=>s.key.includes(qn));
+    const sc=s=> normS(s.name).startsWith(qn)?0 : s.key.startsWith(qn)?0 : s.key.includes(' '+qn)?1 : 2;
+    list.sort((a,b)=> sc(a)-sc(b) || a.mag-b.mag);
+    list=list.slice(0,30);
+    head=list.length? list.length+' r\u00e9sultat'+(list.length>1?'s':'') : '';
+  }
+  curResults=list;
+  if(!list.length){
+    results.innerHTML='<div class="nores">Aucune \u00e9toile trouv\u00e9e. Essayez \u00ab V\u00e9ga \u00bb, \u00ab B\u00e9telgeuse \u00bb, \u00ab Cygne \u00bb\u2026</div>';
+  } else {
+    const lst=lstNow();
+    results.innerHTML='<div class="rhead">'+head+'</div>'+list.map((s,i)=>{
+      const aa=altAzOf(s,lst), up=aa[0]>0;
+      return '<div class="res" data-i="'+i+'"><div><div class="n">'+esc(s.name)+'</div><div class="s">'+esc(subTitle(s))
+        +'</div></div><div class="right"><div class="m mono">mag '+fmt(s.mag,1)+'</div><div class="alt '+(up?'up':'dn')+'">'
+        +(up?'\u2191 '+Math.round(aa[0])+'\u00b0':'\u2193 sous l\u2019horizon')+'</div></div></div>';
+    }).join('');
+  }
+  results.classList.remove('hidden');
+}
+q.addEventListener('input',renderResults);
+q.addEventListener('focus',renderResults);
+q.addEventListener('keydown',e=>{ if(e.key==='Enter'&&curResults.length){ pick(curResults[0]); } });
+qclear.addEventListener('click',()=>{ q.value=''; renderResults(); q.focus(); });
+results.addEventListener('click',e=>{
+  const el=e.target.closest('.res');
+  if(el) pick(curResults[+el.dataset.i]);
+});
+function pick(s){
+  setTarget(s); q.value=s.name; q.blur();
+  results.classList.add('hidden');
+}
+
+/* ================= CIBLE ================= */
+function setTarget(s){
+  S.target=s;
+  cName.textContent=s.name; cSub.textContent=subTitle(s);
+  const parts=['mag '+fmt(s.mag,2)];
+  if(s.sp) parts.push(s.sp);
+  if(s.ly) parts.push(s.ly.toLocaleString('fr-FR')+' al');
+  cStats.textContent=parts.join(' \u00b7 ');
+  cDyn.textContent='\u2026';
+  card.classList.remove('hidden');
+}
+$('cClose').addEventListener('click',()=>{ S.target=null; card.classList.add('hidden'); q.value=''; qclear.classList.add('hidden'); });
+cCal.addEventListener('click',()=>{
+  if(!S.target||manualActive()) return;
+  const B=activeBasis(), s=S.target, d=toENUq(s);
+  const azS=Math.atan2(d[0],d[1])*R2D, azF=Math.atan2(B.f[0],B.f[1])*R2D;
+  const alS=Math.asin(clamp(d[2],-1,1))*R2D, alF=Math.asin(clamp(B.f[2],-1,1))*R2D;
+  const dAz=wrap180(azS-azF);
+  if(Math.abs(alS-alF)>20 || Math.abs(dAz)>60){ toast('Centrez d\u2019abord l\u2019\u00e9toile r\u00e9elle dans le viseur, puis calez'); return; }
+  S.azOff=wrap180(S.azOff+dAz);
+  $('azo').value=clamp(S.azOff,-25,25); $('azoV').textContent=fmt(S.azOff,1)+'\u00b0';
+  toast('Boussole cal\u00e9e ('+(dAz>=0?'+':'')+fmt(dAz,1)+'\u00b0)');
+});
+function toENUq(s){
+  const lst=lstNow(), lr=lst*D2R, ct=Math.cos(lr), st=Math.sin(lr);
+  const fr=S.lat*D2R, sf=Math.sin(fr), cf=Math.cos(fr);
+  const xH=ct*s.x+st*s.y, yH=st*s.x-ct*s.y;
+  return [-yH, cf*s.z-sf*xH, sf*s.z+cf*xH];
+}
+
+/* ================= RÉGLAGES ================= */
+$('gear').addEventListener('click',()=>{ sheet.classList.toggle('hidden'); results.classList.add('hidden'); });
+$('sheetClose').addEventListener('click',()=>sheet.classList.add('hidden'));
+$('fov').addEventListener('input',e=>{ S.fov=+e.target.value; $('fovV').textContent=Math.round(S.fov)+'\u00b0'; });
+$('azo').addEventListener('input',e=>{ S.azOff=+e.target.value; $('azoV').textContent=fmt(S.azOff,1)+'\u00b0'; });
+$('azoReset').addEventListener('click',()=>{ S.azOff=0; $('azo').value=0; $('azoV').textContent='0,0\u00b0'; });
+$('mag').addEventListener('input',e=>{ S.magLim=+e.target.value; $('magV').textContent=fmt(S.magLim,1); });
+$('tCam').addEventListener('change',e=>{ S.tCam=e.target.checked; if(S.tCam&&!camOn) initCamera(); camEl.style.display=(S.tCam&&camOn)?'block':'none'; });
+$('tLines').addEventListener('change',e=>S.lines=e.target.checked);
+$('tCn').addEventListener('change',e=>S.cn=e.target.checked);
+$('tSn').addEventListener('change',e=>S.sn=e.target.checked);
+$('tNight').addEventListener('change',e=>document.body.classList.toggle('night',e.target.checked));
+$('tMan').addEventListener('change',e=>{
+  S.man=e.target.checked;
+  if(S.man&&smF){ S.maz=((Math.atan2(smF[0],smF[1])*R2D)%360+360)%360; S.malt=Math.asin(clamp(smF[2],-1,1))*R2D; }
+  updateStatus();
+});
+$('locApply').addEventListener('click',()=>{
+  const la=parseFloat($('latI').value.replace(',','.')), lo=parseFloat($('lonI').value.replace(',','.'));
+  if(isNaN(la)||isNaN(lo)||Math.abs(la)>90||Math.abs(lo)>180){ toast('Coordonn\u00e9es invalides'); return; }
+  S.lat=la; S.lon=lo; S.geoOk='manual'; toast('Position mise \u00e0 jour');
+});
+$('locGps').addEventListener('click',initGeo);
+
+/* ================= INTERACTIONS CANVAS ================= */
+const ptrs=new Map(); let moveTot=0, downT=0, pinchD=0;
+sky.addEventListener('pointerdown',e=>{
+  sky.setPointerCapture(e.pointerId);
+  ptrs.set(e.pointerId,[e.clientX,e.clientY]);
+  if(ptrs.size===1){ moveTot=0; downT=performance.now(); results.classList.add('hidden'); q.blur(); }
+  if(ptrs.size===2){
+    const p=[...ptrs.values()];
+    pinchD=Math.hypot(p[0][0]-p[1][0], p[0][1]-p[1][1]);
+  }
+});
+sky.addEventListener('pointermove',e=>{
+  if(!ptrs.has(e.pointerId)) return;
+  const prev=ptrs.get(e.pointerId);
+  const dx=e.clientX-prev[0], dy=e.clientY-prev[1];
+  ptrs.set(e.pointerId,[e.clientX,e.clientY]);
+  moveTot+=Math.abs(dx)+Math.abs(dy);
+  if(ptrs.size===2){
+    const p=[...ptrs.values()];
+    const dcur=Math.hypot(p[0][0]-p[1][0], p[0][1]-p[1][1]);
+    if(pinchD>0&&dcur>0){
+      S.fov=clamp(S.fov*pinchD/dcur,30,100);
+      $('fov').value=S.fov; $('fovV').textContent=Math.round(S.fov)+'\u00b0';
+    }
+    pinchD=dcur;
+  } else if(manualActive()){
+    const fpx=(H/2)/Math.tan(S.fov*D2R/2);
+    S.maz=((S.maz - dx/fpx*R2D)%360+360)%360;
+    S.malt=clamp(S.malt + dy/fpx*R2D,-89,89);
+  }
+});
+function ptrUp(e){
+  if(!ptrs.has(e.pointerId)) return;
+  ptrs.delete(e.pointerId);
+  if(ptrs.size===0 && moveTot<8 && performance.now()-downT<400){
+    let best=null, bd=34;
+    for(const [s,x,y] of visList){
+      const d=Math.hypot(e.clientX-x, e.clientY-y);
+      if(d<bd){ bd=d; best=s; }
+    }
+    if(best){ pick(best); }
+  }
+  pinchD=0;
+}
+sky.addEventListener('pointerup',ptrUp);
+sky.addEventListener('pointercancel',e=>ptrs.delete(e.pointerId));
+
+/* ================= DÉMARRAGE ================= */
+async function acquireWakeLock(){
+  try{ wakeLock=await navigator.wakeLock.request('screen'); }catch(e){}
+}
+$('go').addEventListener('click',async()=>{
+  $('start').classList.add('hidden');
+  try{ if(document.documentElement.requestFullscreen) await document.documentElement.requestFullscreen(); }catch(e){}
+  try{ await screen.orientation.lock('portrait'); }catch(e){}
+  acquireWakeLock();
+  document.addEventListener('visibilitychange',()=>{ if(document.visibilityState==='visible') acquireWakeLock(); });
+  initCamera(); initGeo(); initSensors();
+});
+requestAnimationFrame(draw);
+</script>
+</body>
+</html>
