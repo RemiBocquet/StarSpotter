@@ -7,9 +7,9 @@
 <meta name="mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<title>Pointe-Étoiles</title>
+<title>StarSpotter</title>
 <!--
-  Pointe-Étoiles — viseur AR du ciel nocturne, fichier unique, hors-ligne.
+  StarSpotter — viseur AR du ciel nocturne, fichier unique, hors-ligne.
   Données : HYG v4.1 (astronexus, CC BY-SA 4.0) — 1000 étoiles les plus brillantes,
   coordonnées précessées à l'époque J2026.5 (astropy FK5).
   Lignes/labels de constellations : d3-celestial (O. Frohn, BSD-3).
@@ -206,12 +206,12 @@ body.night{filter:grayscale(.15) sepia(1) hue-rotate(-46deg) saturate(4.6) brigh
   </div>
   <div class="loc"><button id="locGps" style="flex:1">Utiliser ma position GPS</button></div>
   <div id="credits">Catalogue HYG v4.1 (astronexus.com, CC BY-SA) · lignes d3-celestial (O. Frohn) ·
-    1000 étoiles · époque J2026.5 · calculs locaux, aucune donnée envoyée.</div>
+    1000 étoiles · Lune, Soleil &amp; planètes (algorithmes P. Schlyter) · époque J2026.5 · calculs locaux, aucune donnée envoyée.</div>
 </div>
 
 <div id="start">
   <div class="reticle"></div>
-  <h1>Pointe-Étoiles</h1>
+  <h1>StarSpotter</h1>
   <p class="tag">Visez le ciel, identifiez les étoiles. Cherchez-en une, la flèche vous y guide.</p>
   <button id="go">Activer caméra &amp; capteurs</button>
   <p class="tiny">Astuce : les boussoles de téléphone dérivent de 5–15°. Une fois lancé, centrez une
@@ -288,6 +288,118 @@ const constLabels = Object.keys(CONSTS).map(k=>{
 });
 const POPULAR = ['Polaris','Sirius','Vega','Arcturus','Capella','Rigel','Betelgeuse','Altair','Deneb','Antares','Aldebaran','Procyon','Pollux','Spica','Fomalhaut','Regulus','Castor','Mizar'];
 
+/* ============ SYSTÈME SOLAIRE (algorithmes de P. Schlyter, ~2\u2032) ============ */
+const SOLAR=[
+ {id:'sun', name:'Soleil', sub:'Notre \u00e9toile', col:'#fff3c8', kw:'soleil sun', body:true},
+ {id:'moon',name:'Lune', sub:'Satellite de la Terre', col:'#e9e6da', kw:'lune moon la lune', body:true},
+ {id:'mer', name:'Mercure', sub:'Plan\u00e8te', col:'#cfc8bd', kw:'mercure mercury planete', body:true},
+ {id:'ven', name:'V\u00e9nus', sub:'Plan\u00e8te \u00b7 l\u2019\u00e9toile du berger', col:'#ffeccb', kw:'venus etoile du berger planete', body:true},
+ {id:'mar', name:'Mars', sub:'Plan\u00e8te', col:'#ff9d7a', kw:'mars planete rouge', body:true},
+ {id:'jup', name:'Jupiter', sub:'Plan\u00e8te', col:'#ffe3b0', kw:'jupiter planete', body:true},
+ {id:'sat', name:'Saturne', sub:'Plan\u00e8te', col:'#f2d79e', kw:'saturne saturn planete anneaux', body:true}
+];
+for(const b of SOLAR){ b.key=normS(b.name+' '+b.kw); b.x=0; b.y=0; b.z=1; b.ra=0; b.de=90; b.mag=0; }
+const sinD=x=>Math.sin(x*D2R), cosD=x=>Math.cos(x*D2R);
+function kepler(M,e){
+  let E=M+e*Math.sin(M)*(1+e*Math.cos(M));
+  for(let k=0;k<6;k++){
+    const dE=(E-e*Math.sin(E)-M)/(1-e*Math.cos(E));
+    E-=dE; if(Math.abs(dE)<1e-9) break;
+  }
+  return E;
+}
+function helioEcl(N,i,w,a,e,M){
+  const E=kepler(M*D2R,e);
+  const xv=a*(Math.cos(E)-e), yv=a*Math.sqrt(1-e*e)*Math.sin(E);
+  const v=Math.atan2(yv,xv), rr=Math.hypot(xv,yv);
+  const Nr=N*D2R, vw=v+w*D2R, ir=i*D2R;
+  return [rr*(Math.cos(Nr)*Math.cos(vw)-Math.sin(Nr)*Math.sin(vw)*Math.cos(ir)),
+          rr*(Math.sin(Nr)*Math.cos(vw)+Math.cos(Nr)*Math.sin(vw)*Math.cos(ir)),
+          rr*Math.sin(vw)*Math.sin(ir), rr];
+}
+function updateBodies(jd){
+  const d=jd-2451543.5, rev=x=>((x%360)+360)%360;
+  const ecl=(23.4393-3.563e-7*d)*D2R, ce=Math.cos(ecl), se=Math.sin(ecl);
+  const byId={}; for(const b of SOLAR) byId[b.id]=b;
+  // Soleil (orbite apparente)
+  const ws=rev(282.9404+4.70935e-5*d), es=0.016709-1.151e-9*d, Ms=rev(356.0470+0.9856002585*d);
+  const Es=kepler(Ms*D2R,es);
+  const sxv=Math.cos(Es)-es, syv=Math.sqrt(1-es*es)*Math.sin(Es);
+  const rs=Math.hypot(sxv,syv), lons=Math.atan2(syv,sxv)+ws*D2R;
+  const xs=rs*Math.cos(lons), ys=rs*Math.sin(lons);
+  const setEq=(b,xg,yg,zg)=>{
+    const xe=xg, ye=yg*ce-zg*se, ze=yg*se+zg*ce;
+    const R=Math.hypot(xe,ye,ze);
+    b.x=xe/R; b.y=ye/R; b.z=ze/R;
+    b.ra=((Math.atan2(ye,xe)*R2D)%360+360)%360;
+    b.de=Math.asin(ze/R)*R2D;
+    b.distAu=R;
+    return R;
+  };
+  setEq(byId.sun, xs, ys, 0);
+  byId.sun.mag=-26.7; byId.sun.angR=0.26656*D2R/rs;
+  // Plan\u00e8tes
+  const Mme=rev(168.6562+4.0923344368*d), Mve=rev(48.0052+1.6021302244*d),
+        Mma=rev(18.6021+0.5240207766*d), Mju=rev(19.8950+0.0830853001*d),
+        Msa=rev(316.9670+0.0334442282*d);
+  const EL={
+    mer:[rev(48.3313+3.24587e-5*d), 7.0047+5.0e-8*d, rev(29.1241+1.01444e-5*d), 0.387098, 0.205635+5.59e-10*d, Mme],
+    ven:[rev(76.6799+2.46590e-5*d), 3.3946+2.75e-8*d, rev(54.8910+1.38374e-5*d), 0.723330, 0.006773-1.302e-9*d, Mve],
+    mar:[rev(49.5574+2.11081e-5*d), 1.8497-1.78e-8*d, rev(286.5016+2.92961e-5*d), 1.523688, 0.093405+2.516e-9*d, Mma],
+    jup:[rev(100.4542+2.76854e-5*d), 1.3030-1.557e-7*d, rev(273.8777+1.64505e-5*d), 5.20256, 0.048498+4.469e-9*d, Mju],
+    sat:[rev(113.6634+2.38980e-5*d), 2.4886-1.081e-7*d, rev(339.3939+2.97661e-5*d), 9.55475, 0.055546-9.499e-9*d, Msa]
+  };
+  for(const id of ['mer','ven','mar','jup','sat']){
+    const [N,i,w,a,e,M]=EL[id];
+    let [xh,yh,zh,r]=helioEcl(N,i,w,a,e,M);
+    let lon=Math.atan2(yh,xh)*R2D, lat=Math.atan2(zh,Math.hypot(xh,yh))*R2D;
+    if(id==='jup'){
+      lon += -0.332*sinD(2*Mju-5*Msa-67.6) -0.056*sinD(2*Mju-2*Msa+21)
+             +0.042*sinD(3*Mju-5*Msa+21) -0.036*sinD(Mju-2*Msa)
+             +0.022*cosD(Mju-Msa) +0.023*sinD(2*Mju-3*Msa+52) -0.016*sinD(Mju-5*Msa-69);
+    } else if(id==='sat'){
+      lon += 0.812*sinD(2*Mju-5*Msa-67.6) -0.229*cosD(2*Mju-4*Msa-2)
+             +0.119*sinD(Mju-2*Msa-3) +0.046*sinD(2*Mju-6*Msa-69) +0.014*sinD(Mju-3*Msa+32);
+      lat += -0.020*cosD(2*Mju-4*Msa-2) +0.018*sinD(2*Mju-6*Msa-49);
+    }
+    const cl=cosD(lat);
+    xh=r*cl*cosD(lon); yh=r*cl*sinD(lon); zh=r*sinD(lat);
+    const b=byId[id];
+    const R=setEq(b, xh+xs, yh+ys, zh);
+    const FV=Math.acos(clamp((r*r+R*R-rs*rs)/(2*r*R),-1,1))*R2D;
+    if(id==='mer')      b.mag=-0.36+5*Math.log10(r*R)+0.027*FV+2.2e-13*Math.pow(FV,6);
+    else if(id==='ven') b.mag=-4.34+5*Math.log10(r*R)+0.013*FV+4.2e-7*Math.pow(FV,3);
+    else if(id==='mar') b.mag=-1.51+5*Math.log10(r*R)+0.016*FV;
+    else if(id==='jup') b.mag=-9.25+5*Math.log10(r*R)+0.014*FV;
+    else {
+      const glon=Math.atan2(yh+ys,xh+xs)*R2D, glat=Math.asin(zh/R)*R2D;
+      const Bt=Math.asin(clamp(sinD(glat)*cosD(28.06)-cosD(glat)*sinD(28.06)*sinD(glon-(169.51+3.82e-5*d)),-1,1));
+      b.mag=-9.0+5*Math.log10(r*R)+0.044*FV-2.6*Math.abs(Math.sin(Bt))+1.2*Math.pow(Math.sin(Bt),2);
+    }
+  }
+  // Lune (g\u00e9ocentrique, en rayons terrestres)
+  const Nm=rev(125.1228-0.0529538083*d), wm=rev(318.0634+0.1643573223*d), Mm=rev(115.3654+13.0649929509*d);
+  let mv=helioEcl(Nm,5.1454,wm,60.2666,0.054900,Mm);
+  let mlon=Math.atan2(mv[1],mv[0])*R2D, mlat=Math.atan2(mv[2],Math.hypot(mv[0],mv[1]))*R2D, mr=mv[3];
+  const Lm=rev(Nm+wm+Mm), Lsun=rev(ws+Ms), Dm=rev(Lm-Lsun), F=rev(Lm-Nm);
+  mlon += -1.274*sinD(Mm-2*Dm) +0.658*sinD(2*Dm) -0.186*sinD(Ms) -0.059*sinD(2*Mm-2*Dm)
+          -0.057*sinD(Mm-2*Dm+Ms) +0.053*sinD(Mm+2*Dm) +0.046*sinD(2*Dm-Ms) +0.041*sinD(Mm-Ms)
+          -0.035*sinD(Dm) -0.031*sinD(Mm+Ms) -0.015*sinD(2*F-2*Dm) +0.011*sinD(Mm-4*Dm);
+  mlat += -0.173*sinD(F-2*Dm) -0.055*sinD(Mm-F-2*Dm) -0.046*sinD(Mm+F-2*Dm)
+          +0.033*sinD(F+2*Dm) +0.017*sinD(2*Mm+F);
+  mr   += -0.58*cosD(Mm-2*Dm) -0.46*cosD(2*Dm);
+  const mcl=cosD(mlat);
+  const gx=mr*mcl*cosD(mlon), gy=mr*mcl*sinD(mlon), gz=mr*sinD(mlat);
+  const moon=byId.moon;
+  setEq(moon, gx, gy, gz);
+  moon.rE=mr; moon.angR=0.27239/mr; moon.distKm=Math.round(mr*6378.14);
+  const elong=Math.acos(clamp((gx*xs+gy*ys)/(mr*rs),-1,1))*R2D;
+  const FVm=180-elong;
+  moon.k=clamp((1+cosD(FVm))/2,0,1);
+  moon.mag=0.23+5*Math.log10(rs*mr*4.2635e-5)+0.026*FVm+4e-9*Math.pow(FVm,4);
+}
+updateBodies(jdNow());
+
 /* ================= ÉTAT ================= */
 const S = {
   lat:46.8, lon:2.4, geoOk:false,
@@ -297,7 +409,7 @@ const S = {
   rel:false, target:null, lastDist:0
 };
 let smF=null, smR=null, lastOri=0, isIOS=false, camOn=false, wakeLock=null;
-let W=0, H=0, lastUi=0;
+let W=0, H=0, lastUi=0, lastBod=0;
 const visList=[]; let curResults=[];
 
 /* ================= DOM ================= */
@@ -393,12 +505,19 @@ function initGeo(){
 
 /* ================= ASTRO ================= */
 function lstNow(){ return ((gmstDeg(jdNow())+S.lon)%360+360)%360; }
-function altAzOf(s,lst){
-  const lr=lst*D2R, ct=Math.cos(lr), st=Math.sin(lr);
-  const fr=S.lat*D2R, sf=Math.sin(fr), cf=Math.cos(fr);
+function enuOf(s,ct,st,sf,cf){
   const xH=ct*s.x+st*s.y, yH=st*s.x-ct*s.y;
-  const E=-yH, N=cf*s.z-sf*xH, U=sf*s.z+cf*xH;
-  return [Math.asin(clamp(U,-1,1))*R2D, ((Math.atan2(E,N)*R2D)%360+360)%360];
+  let E=-yH, N=cf*s.z-sf*xH, U=sf*s.z+cf*xH;
+  if(s.id==='moon'){ // parallaxe topocentrique (Terre sphérique, observateur au zénith local)
+    const rr=s.rE, l=Math.hypot(E*rr, N*rr, U*rr-1)||1;
+    E=E*rr/l; N=N*rr/l; U=(U*rr-1)/l;
+  }
+  return [E,N,U];
+}
+function altAzOf(s,lst){
+  const lr=lst*D2R, fr=S.lat*D2R;
+  const v=enuOf(s, Math.cos(lr), Math.sin(lr), Math.sin(fr), Math.cos(fr));
+  return [Math.asin(clamp(v[2],-1,1))*R2D, ((Math.atan2(v[0],v[1])*R2D)%360+360)%360];
 }
 function riseText(s,lst){
   const fr=S.lat*D2R, de=s.de*D2R;
@@ -410,13 +529,33 @@ function riseText(s,lst){
   const dh=(((-H0-Hc)%360)+360)%360/15.04107;
   const h=Math.floor(dh), m=Math.round((dh-h)*60);
   const azR=Math.acos(clamp(Math.sin(de)/Math.cos(fr),-1,1))*R2D;
-  return 'Sous l\u2019horizon \u2014 lever dans '+h+' h '+String(m).padStart(2,'0')+', az \u2248 '+Math.round(azR)+'\u00b0 ('+compassPt(azR)+')';
+  return 'Sous l\u2019horizon \u2014 lever dans \u2248 '+h+' h '+String(m).padStart(2,'0')+', az \u2248 '+Math.round(azR)+'\u00b0 ('+compassPt(azR)+')';
 }
 
 /* ================= BOUCLE DE RENDU ================= */
+function drawMoonPhase(x,y,R,k,ang){
+  ctx.save(); ctx.translate(x,y); ctx.rotate(ang);
+  ctx.fillStyle='#3c414d'; ctx.beginPath(); ctx.arc(0,0,R,0,TAU); ctx.fill();
+  ctx.fillStyle='#eae6da'; ctx.beginPath();
+  ctx.arc(0,0,R,-Math.PI/2,Math.PI/2,false);
+  ctx.ellipse(0,0,R*Math.abs(2*k-1),R,0,Math.PI/2,-Math.PI/2,k<0.5);
+  ctx.closePath(); ctx.fill();
+  ctx.strokeStyle='rgba(255,255,255,.25)'; ctx.lineWidth=1;
+  ctx.beginPath(); ctx.arc(0,0,R,0,TAU); ctx.stroke();
+  ctx.restore();
+}
+function limbAngle(dm,ds,r,u){
+  const c=dot(ds,dm);
+  const t=[ds[0]-dm[0]*c, ds[1]-dm[1]*c, ds[2]-dm[2]*c];
+  const l=Math.hypot(t[0],t[1],t[2])||1;
+  return Math.atan2(-(t[0]*u[0]+t[1]*u[1]+t[2]*u[2])/l, (t[0]*r[0]+t[1]*r[1]+t[2]*r[2])/l);
+}
+
 const frameLabels=[];
 function draw(){
   requestAnimationFrame(draw);
+  const pnB=performance.now();
+  if(pnB-lastBod>1000){ lastBod=pnB; updateBodies(jdNow()); }
   const w=W, h=H;
   ctx.clearRect(0,0,w,h);
   if(!(S.tCam&&camOn)){
@@ -494,9 +633,41 @@ function draw(){
   }
   ctx.fillStyle='rgba(233,238,251,.78)'; ctx.font='11px system-ui'; ctx.textAlign='left';
   for(const L of frameLabels) ctx.fillText(L[0],L[1]+8,L[2]-7);
+
+  // Système solaire
+  const sunV=enuOf(SOLAR[0],ct,st,sf,cf);
+  for(const b of SOLAR){
+    const dv = b.id==='sun' ? sunV : enuOf(b,ct,st,sf,cf);
+    const p=proj(dv);
+    if(!p) continue;
+    const x=p[0], y=p[1];
+    if(x<-60||x>w+60||y<-60||y>h+60) continue;
+    if(b.id==='sun'){
+      const Rs=Math.max(9, Math.tan(b.angR)*fpx);
+      const g=ctx.createRadialGradient(x,y,Rs*0.4,x,y,Rs*3.2);
+      g.addColorStop(0,'rgba(255,240,200,.9)'); g.addColorStop(.35,'rgba(255,215,140,.35)'); g.addColorStop(1,'rgba(255,200,120,0)');
+      ctx.fillStyle=g; ctx.beginPath(); ctx.arc(x,y,Rs*3.2,0,TAU); ctx.fill();
+      ctx.fillStyle='#fff6d9'; ctx.beginPath(); ctx.arc(x,y,Rs,0,TAU); ctx.fill();
+      visList.push([b,x,y]);
+      if(S.sn){ ctx.fillStyle='rgba(255,236,200,.85)'; ctx.font='600 11px system-ui'; ctx.textAlign='left'; ctx.fillText(b.name,x+Rs+6,y+4); }
+    } else if(b.id==='moon'){
+      const Rm=Math.max(8, Math.tan(b.angR)*fpx);
+      drawMoonPhase(x,y,Rm,b.k,limbAngle(dv,sunV,r,u));
+      visList.push([b,x,y]);
+      if(S.sn){ ctx.fillStyle='rgba(233,238,251,.85)'; ctx.font='600 11px system-ui'; ctx.textAlign='left'; ctx.fillText(b.name,x+Rm+6,y+4); }
+    } else {
+      const rad=Math.max(1.6,(5.6-b.mag)*0.95);
+      if(b.mag<0.6){ ctx.globalAlpha=.18; ctx.fillStyle=b.col; ctx.beginPath(); ctx.arc(x,y,rad*2.6,0,TAU); ctx.fill(); ctx.globalAlpha=1; }
+      ctx.fillStyle=b.col; ctx.beginPath(); ctx.arc(x,y,rad,0,TAU); ctx.fill();
+      ctx.strokeStyle='rgba(255,255,255,.5)'; ctx.lineWidth=1;
+      ctx.beginPath(); ctx.arc(x,y,rad+2.5,0,TAU); ctx.stroke();
+      visList.push([b,x,y]);
+      if(S.sn){ ctx.fillStyle='rgba(255,242,222,.85)'; ctx.font='600 11px system-ui'; ctx.textAlign='left'; ctx.fillText(b.name,x+rad+7,y+4); }
+    }
+  }
   // cible
   if(S.target){
-    const s=S.target, d=toENU(s.x,s.y,s.z);
+    const s=S.target, d=enuOf(s,ct,st,sf,cf);
     const dist=Math.acos(clamp(dot(d,f),-1,1))*R2D; S.lastDist=dist;
     const p=proj(d);
     ctx.strokeStyle=AMB; ctx.fillStyle=AMB;
@@ -505,7 +676,8 @@ function draw(){
         ctx.globalAlpha=.3; ctx.lineWidth=1; ctx.beginPath();
         ctx.moveTo(cx,cy); ctx.lineTo(p[0],p[1]); ctx.stroke(); ctx.globalAlpha=1;
       }
-      const R0=19+2.5*Math.sin(performance.now()/260);
+      const bR=s.angR ? Math.max(8,Math.tan(s.angR)*fpx)+8 : 0;
+      const R0=Math.max(19,bR)+2.5*Math.sin(performance.now()/260);
       ctx.lineWidth=2; ctx.beginPath(); ctx.arc(p[0],p[1],R0,0,TAU); ctx.stroke();
       ctx.lineWidth=1.5; ctx.beginPath();
       for(let k=0;k<4;k++){
@@ -565,22 +737,24 @@ function updateCardDyn(lst){
 }
 
 /* ================= RECHERCHE ================= */
-function subTitle(s){ return (s.sec?s.sec+' \u00b7 ':'')+(s.fr||s.la||s.con); }
+function subTitle(s){ return s.body ? s.sub : (s.sec?s.sec+' \u00b7 ':'')+(s.fr||s.la||s.con); }
 function renderResults(){
   const qv=q.value.trim();
   qclear.classList.toggle('hidden',!qv);
   let list, head;
   if(!qv){
-    list=POPULAR.map(n=>byName[n]).filter(Boolean);
+    list=['moon','ven','mar','jup','sat'].map(id=>SOLAR.find(b=>b.id===id))
+        .concat(POPULAR.map(n=>byName[n]).filter(Boolean));
     head='Populaires';
   } else {
     let qn=normS(qv).replace(/['\u2019]/g,' ').replace(/\s+/g,' ').trim();
     const AL={'polaire':'polaris','la polaire':'polaris','etoile polaire':'polaris','l etoile polaire':'polaris','epi':'spica','l epi':'spica'};
     if(AL[qn]) qn=AL[qn];
-    list=stars.filter(s=>s.key.includes(qn));
+    const lb=SOLAR.filter(b=>b.key.includes(qn));
+    let ls=stars.filter(s=>s.key.includes(qn));
     const sc=s=> normS(s.name).startsWith(qn)?0 : s.key.startsWith(qn)?0 : s.key.includes(' '+qn)?1 : 2;
-    list.sort((a,b)=> sc(a)-sc(b) || a.mag-b.mag);
-    list=list.slice(0,30);
+    ls.sort((a,b)=> sc(a)-sc(b) || a.mag-b.mag);
+    list=lb.concat(ls).slice(0,30);
     head=list.length? list.length+' r\u00e9sultat'+(list.length>1?'s':'') : '';
   }
   curResults=list;
@@ -614,9 +788,20 @@ function pick(s){
 function setTarget(s){
   S.target=s;
   cName.textContent=s.name; cSub.textContent=subTitle(s);
-  const parts=['mag '+fmt(s.mag,2)];
-  if(s.sp) parts.push(s.sp);
-  if(s.ly) parts.push(s.ly.toLocaleString('fr-FR')+' al');
+  let parts;
+  if(s.body){
+    parts=['mag '+fmt(s.mag,1)];
+    if(s.id==='moon'){
+      parts.push('\u00e9clair\u00e9e \u00e0 '+Math.round(s.k*100)+' %');
+      parts.push(s.distKm.toLocaleString('fr-FR')+' km');
+    } else {
+      parts.push(fmt(s.distAu, s.distAu<2?3:2)+' ua');
+    }
+  } else {
+    parts=['mag '+fmt(s.mag,2)];
+    if(s.sp) parts.push(s.sp);
+    if(s.ly) parts.push(s.ly.toLocaleString('fr-FR')+' al');
+  }
   cStats.textContent=parts.join(' \u00b7 ');
   cDyn.textContent='\u2026';
   card.classList.remove('hidden');
@@ -624,21 +809,16 @@ function setTarget(s){
 $('cClose').addEventListener('click',()=>{ S.target=null; card.classList.add('hidden'); q.value=''; qclear.classList.add('hidden'); });
 cCal.addEventListener('click',()=>{
   if(!S.target||manualActive()) return;
-  const B=activeBasis(), s=S.target, d=toENUq(s);
-  const azS=Math.atan2(d[0],d[1])*R2D, azF=Math.atan2(B.f[0],B.f[1])*R2D;
-  const alS=Math.asin(clamp(d[2],-1,1))*R2D, alF=Math.asin(clamp(B.f[2],-1,1))*R2D;
-  const dAz=wrap180(azS-azF);
-  if(Math.abs(alS-alF)>20 || Math.abs(dAz)>60){ toast('Centrez d\u2019abord l\u2019\u00e9toile r\u00e9elle dans le viseur, puis calez'); return; }
+  const aa=altAzOf(S.target,lstNow());
+  const B=activeBasis();
+  const azF=((Math.atan2(B.f[0],B.f[1])*R2D)%360+360)%360;
+  const alF=Math.asin(clamp(B.f[2],-1,1))*R2D;
+  const dAz=wrap180(aa[1]-azF);
+  if(Math.abs(aa[0]-alF)>20 || Math.abs(dAz)>60){ toast('Centrez d\u2019abord l\u2019astre r\u00e9el dans le viseur, puis calez'); return; }
   S.azOff=wrap180(S.azOff+dAz);
   $('azo').value=clamp(S.azOff,-25,25); $('azoV').textContent=fmt(S.azOff,1)+'\u00b0';
   toast('Boussole cal\u00e9e ('+(dAz>=0?'+':'')+fmt(dAz,1)+'\u00b0)');
 });
-function toENUq(s){
-  const lst=lstNow(), lr=lst*D2R, ct=Math.cos(lr), st=Math.sin(lr);
-  const fr=S.lat*D2R, sf=Math.sin(fr), cf=Math.cos(fr);
-  const xH=ct*s.x+st*s.y, yH=st*s.x-ct*s.y;
-  return [-yH, cf*s.z-sf*xH, sf*s.z+cf*xH];
-}
 
 /* ================= RÉGLAGES ================= */
 $('gear').addEventListener('click',()=>{ sheet.classList.toggle('hidden'); results.classList.add('hidden'); });
