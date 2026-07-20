@@ -1,5 +1,5 @@
 // StarSpotter — service worker : coquille en cache, hors-ligne d'abord
-const CACHE = 'starspotter-v1';
+const CACHE = 'starspotter-v2';
 const ASSETS = ['./', './index.html', './manifest.json',
                 './icon-192.png', './icon-512.png', './icon-180.png'];
 self.addEventListener('install', e => {
