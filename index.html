@@ -626,7 +626,27 @@ function limbAngle(dm,ds,r,u){
   return Math.atan2(-(t[0]*u[0]+t[1]*u[1]+t[2]*u[2])/l, (t[0]*r[0]+t[1]*r[1]+t[2]*r[2])/l);
 }
 
-const frameLabels=[];
+const labelCands=[], labelBoxes=[];
+function boxHit(x0,y0,x1,y1){
+  for(let i=0;i<labelBoxes.length;i++){ const b=labelBoxes[i];
+    if(x0<b[2] && x1>b[0] && y0<b[3] && y1>b[1]) return true; }
+  return false;
+}
+function placeLabel(txt,x,y,rad,col,font){
+  ctx.font=font; const w=ctx.measureText(txt).width;
+  const cand=[[x+rad+5,y+4,'left'],[x-rad-5-w,y+4,'left'],[x,y-rad-7,'center'],[x,y+rad+14,'center']];
+  for(let i=0;i<cand.length;i++){
+    const lx=cand[i][0], ly=cand[i][1], al=cand[i][2];
+    const x0=(al==='center'?lx-w/2:lx)-2, x1=x0+w+4, y0=ly-12, y1=ly+3;
+    if(x1<-20 || x0>W+20) continue;
+    if(!boxHit(x0,y0,x1,y1)){
+      labelBoxes.push([x0,y0,x1,y1]);
+      ctx.textAlign=al; ctx.fillStyle=col; ctx.fillText(txt,lx,ly);
+      return true;
+    }
+  }
+  return false;
+}
 function draw(){
   requestAnimationFrame(draw);
   const pnB=performance.now();
@@ -730,7 +750,7 @@ function draw(){
     }
   }
   // étoiles
-  visList.length=0; frameLabels.length=0;
+  visList.length=0; labelCands.length=0; labelBoxes.length=0;
   for(let si=0;si<stars.length;si++){
     const s=stars[si];
     if(si>=S.baseN && !S.lines && !S.act.has(s.con) && s!==S.target) continue;
@@ -745,10 +765,8 @@ function draw(){
     }
     ctx.fillStyle=s.col; ctx.beginPath(); ctx.arc(x,y,s.rad,0,TAU); ctx.fill();
     visList.push([s,x,y]);
-    if(S.sn && s.mag<=1.7 && s.name) frameLabels.push([s.name,x,y]);
+    if(S.sn && s.mag<=1.7 && s.name && s!==S.target) labelCands.push([s.name,x,y,s.rad,'rgba(233,238,251,.92)',s.mag]);
   }
-  ctx.fillStyle='rgba(233,238,251,.78)'; ctx.font='11px system-ui'; ctx.textAlign='left';
-  for(const L of frameLabels) ctx.fillText(L[0],L[1]+8,L[2]-7);
 
   // Système solaire
   const sunV=enuOf(SOLAR[0],ct,st,sf,cf);
@@ -765,12 +783,12 @@ function draw(){
       ctx.fillStyle=g; ctx.beginPath(); ctx.arc(x,y,Rs*3.2,0,TAU); ctx.fill();
       ctx.fillStyle='#fff6d9'; ctx.beginPath(); ctx.arc(x,y,Rs,0,TAU); ctx.fill();
       visList.push([b,x,y]);
-      if(S.sn){ ctx.fillStyle='rgba(255,236,200,.85)'; ctx.font='600 11px system-ui'; ctx.textAlign='left'; ctx.fillText(b.name,x+Rs+6,y+4); }
+      if(S.sn && b!==S.target) labelCands.push([b.name,x,y,Rs,'rgba(255,236,200,.96)',-100]);
     } else if(b.id==='moon'){
       const Rm=Math.max(8, Math.tan(b.angR)*fpx);
       drawMoonPhase(x,y,Rm,b.k,limbAngle(dv,sunV,r,u));
       visList.push([b,x,y]);
-      if(S.sn){ ctx.fillStyle='rgba(233,238,251,.85)'; ctx.font='600 11px system-ui'; ctx.textAlign='left'; ctx.fillText(b.name,x+Rm+6,y+4); }
+      if(S.sn && b!==S.target) labelCands.push([b.name,x,y,Rm,'rgba(233,238,251,.96)',-100]);
     } else {
       const rad=Math.max(1.6,(5.6-b.mag)*0.95);
       if(b.mag<0.6){ ctx.globalAlpha=.18; ctx.fillStyle=b.col; ctx.beginPath(); ctx.arc(x,y,rad*2.6,0,TAU); ctx.fill(); ctx.globalAlpha=1; }
@@ -778,7 +796,7 @@ function draw(){
       ctx.strokeStyle='rgba(255,255,255,.5)'; ctx.lineWidth=1;
       ctx.beginPath(); ctx.arc(x,y,rad+2.5,0,TAU); ctx.stroke();
       visList.push([b,x,y]);
-      if(S.sn){ ctx.fillStyle='rgba(255,242,222,.85)'; ctx.font='600 11px system-ui'; ctx.textAlign='left'; ctx.fillText(b.name,x+rad+7,y+4); }
+      if(S.sn && b!==S.target) labelCands.push([b.name,x,y,rad,'rgba(255,242,222,.96)',-90]);
     }
   }
   // cible
@@ -807,6 +825,8 @@ function draw(){
       }
       ctx.font='600 12.5px system-ui'; ctx.textAlign='center';
       ctx.fillText(s.name, p[0], p[1]-R0-13);
+      const tw=ctx.measureText(s.name).width;
+      labelBoxes.push([p[0]-tw/2-2, p[1]-R0-26, p[0]+tw/2+2, p[1]-R0-10]);
     } else {
       const sx=dot(d,r), sy=dot(d,u);
       let vx=sx, vy=-sy;
@@ -818,6 +838,12 @@ function draw(){
       ctx.font='600 13px ui-monospace,monospace'; ctx.textAlign='center';
       ctx.fillText(Math.round(dist)+'\u00b0', cx+vx*138, cy+vy*138+4);
     }
+  }
+  // étiquettes : placement par priorité (corps puis étoiles les plus brillantes), sans chevauchement
+  labelCands.sort((a,b)=>a[5]-b[5]);
+  for(let i=0;i<labelCands.length;i++){
+    const L=labelCands[i];
+    placeLabel(L[0],L[1],L[2],L[3],L[4], (L[5]<0?'600 11px ':'11px ')+'system-ui');
   }
   // croix centrale
   ctx.strokeStyle = S.target?AMB:'rgba(255,255,255,.4)'; ctx.lineWidth=1.2; ctx.beginPath();
