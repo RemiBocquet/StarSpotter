@@ -180,7 +180,7 @@ body.night{filter:grayscale(.15) sepia(1) hue-rotate(-46deg) saturate(4.6) brigh
 <div id="sheet" class="hidden">
   <button id="sheetClose" aria-label="Fermer">✕</button>
   <h2>Visée</h2>
-  <div class="srow"><label>Champ vertical</label><span class="val mono" id="fovV">62°</span></div>
+  <div class="srow"><label>Champ de la caméra (zoom 1×)</label><span class="val mono" id="fovV">62°</span></div>
   <div class="srange"><input type="range" id="fov" min="30" max="100" step="1" value="62"></div>
   <div class="srow"><label>Correction d'azimut</label><span class="val mono" id="azoV">0,0°</span></div>
   <div class="srange" style="display:flex;gap:10px;align-items:center">
@@ -297,6 +297,29 @@ const constLabels = Object.keys(CONSTS).map(k=>{
   const c=CONSTS[k], A=c[2]*D2R, D=c[3]*D2R, cd=Math.cos(D);
   return {con:k, fr:c[1]||c[0], v:[cd*Math.cos(A), cd*Math.sin(A), Math.sin(D)]};
 });
+(function(){ /* précession perpétuelle : catalogue J2026.5 → équinoxe de la date (Meeus, IAU 1976) */
+  const EJ=2461224.125;
+  const T=(EJ-2451545.0)/36525, t=(jdNow()-EJ)/36525;
+  if(Math.abs(t)<1e-7) return;
+  const s2r=Math.PI/648000;
+  const ze=((2306.2181+1.39656*T-0.000139*T*T)*t+(0.30188-0.000344*T)*t*t+0.017998*t*t*t)*s2r;
+  const zz=((2306.2181+1.39656*T-0.000139*T*T)*t+(1.09468+0.000066*T)*t*t+0.018203*t*t*t)*s2r;
+  const th=((2004.3109-0.85330*T-0.000217*T*T)*t-(0.42665+0.000217*T)*t*t-0.041833*t*t*t)*s2r;
+  const cz=Math.cos(zz), sz=Math.sin(zz), ct=Math.cos(th), st=Math.sin(th), cx=Math.cos(ze), sx=Math.sin(ze);
+  const p00=cz*ct*cx-sz*sx, p01=-cz*ct*sx-sz*cx, p02=-cz*st;
+  const p10=sz*ct*cx+cz*sx, p11=-sz*ct*sx+cz*cx, p12=-sz*st;
+  const p20=st*cx, p21=-st*sx, p22=ct;
+  const apv=v=>{ const x=v[0], y=v[1], z=v[2];
+    v[0]=p00*x+p01*y+p02*z; v[1]=p10*x+p11*y+p12*z; v[2]=p20*x+p21*y+p22*z; };
+  for(const o of stars){
+    const x=o.x, y=o.y, z=o.z;
+    o.x=p00*x+p01*y+p02*z; o.y=p10*x+p11*y+p12*z; o.z=p20*x+p21*y+p22*z;
+    o.ra=((Math.atan2(o.y,o.x)*R2D)%360+360)%360; o.de=Math.asin(clamp(o.z,-1,1))*R2D;
+  }
+  for(const L of lineVecs) for(const v of L.pts) apv(v);
+  for(const c of constLabels) apv(c.v);
+  for(const g of mwRings) for(const v of g.pts) apv(v);
+})();
 const POPULAR = ['Polaris','Sirius','Vega','Arcturus','Capella','Rigel','Betelgeuse','Altair','Deneb','Antares','Aldebaran','Procyon','Pollux','Spica','Fomalhaut','Regulus','Castor','Mizar'];
 
 /* ============ SYSTÈME SOLAIRE (algorithmes de P. Schlyter, ~2\u2032) ============ */
@@ -414,13 +437,14 @@ updateBodies(jdNow());
 /* ================= ÉTAT ================= */
 const S = {
   lat:46.8, lon:2.4, geoOk:false,
-  fov:62, azOff:0, baseN:150,
+  fov:62, camFov:62, azOff:0, baseN:150,
   tCam:true, lines:false, mw:true, cn:true, sn:true, night:false, man:false,
   maz:180, malt:30,
   rel:false, target:null, lastDist:0,
   act:new Set()
 };
 let smF=null, smR=null, lastOri=0, isIOS=false, camOn=false, wakeLock=null;
+let camTrack=null, camZoomCaps=null, lastHwZoom=0, hwZoomT=0;
 let W=0, H=0, lastUi=0, lastBod=0;
 const visList=[], conHits=[]; let curResults=[];
 
@@ -497,11 +521,35 @@ async function initSensors(){
 }
 
 /* ================= CAMÉRA / GPS ================= */
+function camZoomFactor(){ return Math.tan(S.camFov*D2R/2)/Math.tan(S.fov*D2R/2); }
+function syncCamZoom(force){
+  if(!camOn){ camEl.style.transform=''; return; }
+  const Z=Math.max(1,camZoomFactor());
+  let css=Z;
+  if(camZoomCaps&&camTrack){
+    const zmin=camZoomCaps.min||1;
+    const hw=clamp(Z*zmin, zmin, camZoomCaps.max);
+    css=Z*zmin/hw;
+    const nw=performance.now();
+    if(force || (Math.abs(hw-lastHwZoom)>0.01 && nw-hwZoomT>160)){
+      hwZoomT=nw; lastHwZoom=hw;
+      camTrack.applyConstraints({advanced:[{zoom:hw}]}).catch(()=>{});
+    }
+  }
+  camEl.style.transform = css>1.001 ? 'scale('+css.toFixed(3)+')' : '';
+}
 async function initCamera(){
   if(!navigator.mediaDevices||!navigator.mediaDevices.getUserMedia){ camOn=false; return; }
   try{
-    const st=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1280}},audio:false});
+    const st=await navigator.mediaDevices.getUserMedia({video:{facingMode:{ideal:'environment'},width:{ideal:1920}},audio:false});
     camEl.srcObject=st; camOn=true;
+    camTrack=st.getVideoTracks()[0];
+    try{
+      const cc=camTrack.getCapabilities?camTrack.getCapabilities():null;
+      camZoomCaps=(cc&&cc.zoom&&isFinite(cc.zoom.max)&&cc.zoom.max>1)?cc.zoom:null;
+    }catch(e){ camZoomCaps=null; }
+    if(S.fov>S.camFov) S.fov=S.camFov;
+    syncCamZoom(true);
     camEl.style.display = S.tCam?'block':'none';
     await camEl.play().catch(()=>{});
   }catch(e){ camOn=false; camEl.style.display='none'; toast('Cam\u00e9ra indisponible \u2014 mode carte du ciel'); }
@@ -772,6 +820,8 @@ function updateStatus(){
     : S.geoOk==='manual' ? fmt(S.lat,2)+' ; '+fmt(S.lon,2)+' \u00b7 manuel'
     : 'position par d\u00e9faut';
   html+='<span class="chip mono'+(S.geoOk?'':' warn')+'">'+posTxt+'</span>';
+  const Zc=camZoomFactor();
+  if(S.tCam&&camOn&&Zc>1.04) html+='<span class="chip mono">'+fmt(Zc,1)+'\u00d7</span>';
   if(manualActive()) html+='<span class="chip">vis\u00e9e manuelle \u2014 glissez</span>';
   else if(S.rel) html+='<span class="chip warn">boussole relative \u2014 calez sur une \u00e9toile</span>';
   html+='<span class="chip mono">'+new Date().toLocaleTimeString('fr-FR',{hour:'2-digit',minute:'2-digit'})+'</span>';
@@ -833,6 +883,7 @@ results.addEventListener('click',e=>{
   if(el) pick(curResults[+el.dataset.i]);
 });
 function pick(s){
+  if(!s.body && s.con && !S.lines && !S.act.has(s.con)) S.act.add(s.con);
   setTarget(s); q.value=s.name; q.blur();
   results.classList.add('hidden');
 }
@@ -876,11 +927,11 @@ cCal.addEventListener('click',()=>{
 /* ================= RÉGLAGES ================= */
 $('gear').addEventListener('click',()=>{ sheet.classList.toggle('hidden'); results.classList.add('hidden'); });
 $('sheetClose').addEventListener('click',()=>sheet.classList.add('hidden'));
-$('fov').addEventListener('input',e=>{ S.fov=+e.target.value; $('fovV').textContent=Math.round(S.fov)+'\u00b0'; });
+$('fov').addEventListener('input',e=>{ S.camFov=+e.target.value; S.fov=S.camFov; $('fovV').textContent=Math.round(S.camFov)+'\u00b0'; syncCamZoom(true); });
 $('azo').addEventListener('input',e=>{ S.azOff=+e.target.value; $('azoV').textContent=fmt(S.azOff,1)+'\u00b0'; });
 $('azoReset').addEventListener('click',()=>{ S.azOff=0; $('azo').value=0; $('azoV').textContent='0,0\u00b0'; });
 $('mag').addEventListener('input',e=>{ S.baseN=+e.target.value; $('magV').textContent=String(S.baseN); });
-$('tCam').addEventListener('change',e=>{ S.tCam=e.target.checked; if(S.tCam&&!camOn) initCamera(); camEl.style.display=(S.tCam&&camOn)?'block':'none'; });
+$('tCam').addEventListener('change',e=>{ S.tCam=e.target.checked; if(S.tCam&&!camOn) initCamera(); camEl.style.display=(S.tCam&&camOn)?'block':'none'; if(S.tCam&&camOn){ if(S.fov>S.camFov) S.fov=S.camFov; syncCamZoom(true); } });
 $('tLines').addEventListener('change',e=>S.lines=e.target.checked);
 $('tMw').addEventListener('change',e=>S.mw=e.target.checked);
 $('tCn').addEventListener('change',e=>S.cn=e.target.checked);
@@ -919,8 +970,9 @@ sky.addEventListener('pointermove',e=>{
     const p=[...ptrs.values()];
     const dcur=Math.hypot(p[0][0]-p[1][0], p[0][1]-p[1][1]);
     if(pinchD>0&&dcur>0){
-      S.fov=clamp(S.fov*pinchD/dcur,30,100);
-      $('fov').value=S.fov; $('fovV').textContent=Math.round(S.fov)+'\u00b0';
+      const mx=(S.tCam&&camOn)?S.camFov:110;
+      S.fov=clamp(S.fov*pinchD/dcur,18,mx);
+      syncCamZoom(false);
     }
     pinchD=dcur;
   } else if(manualActive()){
@@ -952,6 +1004,7 @@ function ptrUp(e){
       }
     }
   }
+  if(ptrs.size<2) syncCamZoom(true);
   pinchD=0;
 }
 sky.addEventListener('pointerup',ptrUp);
